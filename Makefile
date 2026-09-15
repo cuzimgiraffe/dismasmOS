@@ -2,14 +2,14 @@ CC = gcc
 AS = as
 LD = ld
 
-CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-builtin -nostdlib -Iinclude
-ASFLAGS = --32
-LDFLAGS = -m elf_i386 -T linker.ld -nostdlib
+CFLAGS = -m64 -ffreestanding -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-builtin -nostdlib -Iinclude
+ASFLAGS = --64
+LDFLAGS = -m elf_x86_64 -T linker.ld -nostdlib
 
 SRC_C = $(wildcard src/*.c) $(wildcard src/**/*.c)
-SRC_S = $(wildcard src/*.s) $(wildcard src/**/*.s)
+SRC_S = $(wildcard src/**/*.s)
 
-OBJ = $(SRC_C:.c=.o) $(SRC_S:.s=.o)
+OBJ = src/boot/boot.o src/arch/idt_asm.o $(filter-out src/boot/boot.o src/arch/idt_asm.o, $(SRC_C:.c=.o))
 
 BIN = dismasmOS.bin
 ISO = dismasmOS.iso
@@ -37,9 +37,9 @@ clean:
 	rm -rf isodir
 
 qemu: $(ISO)
-	qemu-system-i386 -cdrom $(ISO)
+	qemu-system-x86_64 -cdrom $(ISO)
 
 qemu-bin: $(BIN)
-	qemu-system-i386 -kernel $(BIN)
+	qemu-system-x86_64 -kernel $(BIN)
 
 .PHONY: all iso clean qemu qemu-bin

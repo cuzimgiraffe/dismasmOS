@@ -4,6 +4,8 @@
 #include "string.h"
 #include "fs.h"
 #include "io.h"
+#include "proc.h"
+#include "em.h"
 
 #define CMD_MAX_LEN 128
 #define MAX_ARGS 16
@@ -25,16 +27,15 @@ static void sys_reboot(void) {
     }
 }
 
-static void print_hex(uint32_t val) {
-    char buf[11];
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (int i = 7; i >= 0; i--) {
-        uint8_t n = (uint8_t)((val >> (i * 4)) & 0xF);
-        buf[9 - i] = (n < 10) ? (char)('0' + n) : (char)('A' + n - 10);
+static void print_hex(uint64_t val) {
+    char hex[17];
+    utoa_hex(val, hex);
+    vga_puts("0x");
+    int len = (int)strlen(hex);
+    for (int i = 0; i < 8 - len; i++) {
+        vga_putchar('0');
     }
-    buf[10] = '\0';
-    vga_puts(buf);
+    vga_puts(hex);
 }
 
 static void print_str_pad(const char *s, int pad) {
@@ -46,34 +47,25 @@ static void print_str_pad(const char *s, int pad) {
     }
 }
 
-static void print_num_unit(uint32_t bytes, int pad) {
+static void print_num_kib(uint64_t bytes, int pad) {
     char num[16];
     char out[24];
-    if (bytes >= 1048576) {
-        itoa((int)(bytes / 1048576), num);
-        strcpy(out, num);
-        strcpy(out + strlen(out), " MiB");
-    } else if (bytes >= 1024) {
-        itoa((int)(bytes / 1024), num);
-        strcpy(out, num);
-        strcpy(out + strlen(out), " KiB");
-    } else {
-        itoa((int)bytes, num);
-        strcpy(out, num);
-        strcpy(out + strlen(out), " B");
-    }
+    uint64_t kib = (bytes + 1023) / 1024;
+    itoa((int)kib, num);
+    strcpy(out, num);
+    strcat(out, " KiB");
     print_str_pad(out, pad);
 }
 
 static void cmd_memrep(void) {
-    uint32_t k_start = (uint32_t)&_kernel_start;
-    uint32_t t_end = (uint32_t)&_text_end;
-    uint32_t ro_end = (uint32_t)&_rodata_end;
-    uint32_t d_end = (uint32_t)&_data_end;
-    uint32_t k_end = (uint32_t)&_kernel_end;
+    uint64_t k_start = (uint64_t)(uintptr_t)&_kernel_start;
+    uint64_t t_end = (uint64_t)(uintptr_t)&_text_end;
+    uint64_t ro_end = (uint64_t)(uintptr_t)&_rodata_end;
+    uint64_t d_end = (uint64_t)(uintptr_t)&_data_end;
+    uint64_t k_end = (uint64_t)(uintptr_t)&_kernel_end;
 
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    vga_puts("Memory Allocation Report (MemRep):\n");
+    vga_puts("Memory Allocation Report (MemRep) - 64-Bit x86_64:\n");
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     vga_puts("Address Range           Size       Region         Attribute\n");
     vga_puts("-------------------------------------------------------------\n");
@@ -83,7 +75,7 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(0x0007FFFF);
     vga_puts("  ");
-    print_num_unit(0x00080000, 11);
+    print_num_kib(0x00080000, 11);
     print_str_pad("Low Memory", 15);
     vga_puts("Reserved\n");
 
@@ -91,7 +83,7 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(0x0009FFFF);
     vga_puts("  ");
-    print_num_unit(0x00020000, 11);
+    print_num_kib(0x00020000, 11);
     print_str_pad("EBDA/BIOS", 15);
     vga_puts("Reserved\n");
 
@@ -99,7 +91,7 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(0x000BFFFF);
     vga_puts("  ");
-    print_num_unit(0x00020000, 11);
+    print_num_kib(0x00020000, 11);
     print_str_pad("VGA VRAM", 15);
     vga_puts("MMIO (0xB8000)\n");
 
@@ -107,7 +99,7 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(0x000FFFFF);
     vga_puts("  ");
-    print_num_unit(0x00040000, 11);
+    print_num_kib(0x00040000, 11);
     print_str_pad("Firmware ROM", 15);
     vga_puts("Read-Only\n");
 
@@ -115,7 +107,7 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(t_end);
     vga_puts("  ");
-    print_num_unit(t_end - k_start, 11);
+    print_num_kib(t_end - k_start, 11);
     print_str_pad("Kernel .text", 15);
     vga_puts("Executable\n");
 
@@ -123,7 +115,7 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(ro_end);
     vga_puts("  ");
-    print_num_unit(ro_end - t_end, 11);
+    print_num_kib(ro_end - t_end, 11);
     print_str_pad("Kernel .rodata", 15);
     vga_puts("Read-Only\n");
 
@@ -131,7 +123,7 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(d_end);
     vga_puts("  ");
-    print_num_unit(d_end - ro_end, 11);
+    print_num_kib(d_end - ro_end, 11);
     print_str_pad("Kernel .data", 15);
     vga_puts("Read/Write\n");
 
@@ -139,40 +131,53 @@ static void cmd_memrep(void) {
     vga_puts("-");
     print_hex(k_end);
     vga_puts("  ");
-    print_num_unit(k_end - d_end, 11);
+    print_num_kib(k_end - d_end, 11);
     print_str_pad("Kernel .bss", 15);
     vga_puts("Zero-Init\n");
 
     print_hex(k_end);
     vga_puts("-");
-    print_hex(0x03FFFFFF);
+    print_hex(0x3FFFFFFF);
     vga_puts("  ");
-    print_num_unit(0x04000000 - k_end, 11);
-    print_str_pad("Extended RAM", 15);
-    vga_puts("Available\n");
+    print_num_kib(0x40000000 - k_end, 11);
+    print_str_pad("Identity RAM", 15);
+    vga_puts("1 GiB Long Mode\n");
 
     vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     vga_puts("-------------------------------------------------------------\n");
     vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    vga_puts("RAMFS Payload: ");
+
     char num[16];
-    itoa((int)fs_used_bytes(), num);
+    vga_puts("RAMFS Payload: ");
+    itoa((int)((fs_used_bytes() + 1023) / 1024), num);
     vga_puts(num);
-    vga_puts(" / ");
-    itoa((int)(FS_MAX_FILES * FS_MAX_FILESIZE), num);
+    vga_puts(" KiB / ");
+    itoa((int)((FS_MAX_FILES * FS_MAX_FILESIZE) / 1024), num);
     vga_puts(num);
-    vga_puts(" Bytes (");
+    vga_puts(" KiB (");
     itoa((int)fs_file_count(), num);
     vga_puts(num);
     vga_puts(" active files)\n");
 
-    vga_puts("Kernel Total : ");
-    itoa((int)(k_end - k_start), num);
+    vga_puts("Process Memory: ");
+    itoa((int)proc_total_mem_kib(), num);
     vga_puts(num);
-    vga_puts(" Bytes (");
-    itoa((int)((k_end - k_start + 1023) / 1024), num);
+    vga_puts(" KiB (");
+    itoa((int)proc_active_count(), num);
     vga_puts(num);
-    vga_puts(" KiB)\n");
+    vga_puts(" active processes)\n");
+
+    vga_puts("Kernel Footprint: ");
+    uint64_t k_kib = (k_end - k_start + 1023) / 1024;
+    itoa((int)k_kib, num);
+    vga_puts(num);
+    vga_puts(" KiB\n");
+
+    uint64_t total_used_kib = k_kib + proc_total_mem_kib() + ((fs_used_bytes() + 1023) / 1024) + 32;
+    vga_puts("Total System Used: ");
+    itoa((int)total_used_kib, num);
+    vga_puts(num);
+    vga_puts(" KiB\n");
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
@@ -201,16 +206,18 @@ static void cmd_lang(int argc, char **argv) {
 }
 
 static void cmd_help(void) {
-    vga_puts("Available commands (11):\n");
+    vga_puts("Available commands (13):\n");
     vga_puts("  help    - get help\n");
     vga_puts("  clear   - clearence\n");
-    vga_puts("  echo    - return or use 'echo > file' to insert in file'\n");
-    vga_puts("  ls      - list\n");
+    vga_puts("  echo    - print or redirect into file\n");
+    vga_puts("  ls      - list files\n");
     vga_puts("  cat     - display file content\n");
     vga_puts("  grep    - search pattern in file\n");
     vga_puts("  touch   - empty file creation\n");
+    vga_puts("  em      - vi-style text editor\n");
+    vga_puts("  pr      - process management (start, kill, -c (comment), status)\n");
     vga_puts("  uname   - get system info\n");
-    vga_puts("  MemRep  - memory allocation report\n");
+    vga_puts("  MemRep  - memory allocation report in KiB\n");
     vga_puts("  lang    - switch keyboard layout\n");
     vga_puts("  reboot  - reboot machine\n");
 }
@@ -291,7 +298,59 @@ static void cmd_touch(int argc, char **argv) {
 }
 
 static void cmd_uname(void) {
-    vga_puts("dismasmOS 1.0 (x86_32 i686)\n Creation of the Saviour\n May God lead this Creation\n");
+    vga_puts("dismasmOS 1.2 (x86_64 Long Mode 64-Bit)\nCreation of the Saviour\nMay God lead this Creation\n");
+}
+
+static void cmd_pr(int argc, char **argv) {
+    if (argc < 2) {
+        proc_status_all();
+        return;
+    }
+
+    if (strcmp(argv[1], "start") == 0) {
+        if (argc < 3) {
+            vga_puts("usage: pr start <prozess>\n");
+            return;
+        }
+        proc_start(argv[2]);
+    } else if (strcmp(argv[1], "kill") == 0) {
+        if (argc < 3) {
+            vga_puts("usage: pr kill <prozess>\n");
+            return;
+        }
+        proc_kill(argv[2]);
+    } else if (strcmp(argv[1], "status") == 0) {
+        if (argc >= 3) {
+            proc_status(argv[2]);
+        } else {
+            proc_status_all();
+        }
+    } else if (strcmp(argv[1], "-c") == 0) {
+        if (argc < 4) {
+            vga_puts("usage: pr -c <comment> <prozess>\n");
+            return;
+        }
+        char comment_buf[PROC_COMMENT_MAX];
+        comment_buf[0] = '\0';
+        for (int i = 2; i < argc - 1; i++) {
+            if (i > 2) {
+                strcat(comment_buf, " ");
+            }
+            strcat(comment_buf, argv[i]);
+        }
+        proc_set_comment(argv[argc - 1], comment_buf);
+    } else {
+        proc_start(argv[1]);
+    }
+}
+
+static void cmd_em(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: em <file>\n");
+        return;
+    }
+    em_run(argv[1]);
+    vga_clear();
 }
 
 static int tokenize(char *line, char **argv, int max_args) {
@@ -337,6 +396,10 @@ static void execute_command(int argc, char **argv) {
         cmd_memrep();
     } else if (strcmp(argv[0], "lang") == 0) {
         cmd_lang(argc, argv);
+    } else if (strcmp(argv[0], "pr") == 0) {
+        cmd_pr(argc, argv);
+    } else if (strcmp(argv[0], "em") == 0) {
+        cmd_em(argc, argv);
     } else if (strcmp(argv[0], "reboot") == 0) {
         sys_reboot();
     } else {
@@ -353,10 +416,71 @@ static void print_prompt(void) {
     vga_puts(" | >>> ");
 }
 
+static void handle_line(char *cmd_buf) {
+    char *redir = strchr(cmd_buf, '>');
+    if (redir != NULL) {
+        *redir = '\0';
+        char *target = redir + 1;
+        while (*target == ' ' || *target == '\t') {
+            target++;
+        }
+        char *t_end = target + strlen(target);
+        while (t_end > target && (*(t_end - 1) == ' ' || *(t_end - 1) == '\t')) {
+            t_end--;
+        }
+        *t_end = '\0';
+
+        if (*target == '\0') {
+            vga_puts("syntax error: no file after '>'\n");
+            return;
+        }
+
+        char *cmd_left = cmd_buf;
+        while (*cmd_left == ' ' || *cmd_left == '\t') {
+            cmd_left++;
+        }
+        char *c_end = cmd_left + strlen(cmd_left);
+        while (c_end > cmd_left && (*(c_end - 1) == ' ' || *(c_end - 1) == '\t')) {
+            c_end--;
+        }
+        *c_end = '\0';
+
+        if (strncmp(cmd_left, "echo", 4) == 0 && (cmd_left[4] == ' ' || cmd_left[4] == '\t' || cmd_left[4] == '\0')) {
+            char *text = cmd_left + 4;
+            while (*text == ' ' || *text == '\t') {
+                text++;
+            }
+            if (*text == '"' || *text == '\'') {
+                char q = *text;
+                text++;
+                size_t tlen = strlen(text);
+                if (tlen > 0 && text[tlen - 1] == q) {
+                    text[tlen - 1] = '\0';
+                }
+            }
+
+            if (!fs_find(target)) {
+                if (fs_create(target) != 0) {
+                    vga_puts("error: cannot create file: ");
+                    vga_puts(target);
+                    vga_putchar('\n');
+                    return;
+                }
+            }
+            fs_write(target, text, strlen(text));
+            return;
+        }
+    }
+
+    char *argv[MAX_ARGS];
+    int argc = tokenize(cmd_buf, argv, MAX_ARGS);
+    execute_command(argc, argv);
+}
+
 void shell_init(void) {
     vga_clear();
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_puts("dismasmOS 1.0 (x86_32 i686) - Build 1.0.0 (2026.09.14)\n");
+    vga_puts("dismasmOS 1.2 (x86_64 Long Mode 64-Bit) - Microkernel\n");
     vga_puts("Type 'help' for help.\n\n");
     print_prompt();
 }
@@ -364,15 +488,13 @@ void shell_init(void) {
 void shell_run(void) {
     char cmd_buf[CMD_MAX_LEN];
     size_t cmd_len = 0;
-    char *argv[MAX_ARGS];
 
     while (1) {
         char c = kbd_getchar();
         if (c == '\n') {
             vga_putchar('\n');
             cmd_buf[cmd_len] = '\0';
-            int argc = tokenize(cmd_buf, argv, MAX_ARGS);
-            execute_command(argc, argv);
+            handle_line(cmd_buf);
             cmd_len = 0;
             print_prompt();
         } else if (c == '\b') {

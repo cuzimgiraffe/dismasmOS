@@ -6,29 +6,29 @@ SECTIONS
 
     _kernel_start = .;
 
-    .text BLOCK(4K) : ALIGN(4K)
+    .text : ALIGN(4K)
     {
-        *(.multiboot)
+        KEEP(*(.multiboot))
         *(.text)
     }
 
     _text_end = .;
 
-    .rodata BLOCK(4K) : ALIGN(4K)
+    .rodata : ALIGN(4K)
     {
         *(.rodata*)
     }
 
     _rodata_end = .;
 
-    .data BLOCK(4K) : ALIGN(4K)
+    .data : ALIGN(4K)
     {
         *(.data)
     }
 
     _data_end = .;
 
-    .bss BLOCK(4K) : ALIGN(4K)
+    .bss : ALIGN(4K)
     {
         *(COMMON)
         *(.bss)

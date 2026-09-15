@@ -5,6 +5,7 @@
 #include "pic.h"
 #include "kbd.h"
 #include "fs.h"
+#include "proc.h"
 #include "shell.h"
 
 static void boot_delay(uint32_t count) {
@@ -40,16 +41,16 @@ static void log_ok(const char *msg) {
 void kmain(void) {
     vga_init();
 
-    log_kmsg("    0.000000", "Linux version 1.0.0-dismasmOS (i686-pc-none) #1 PREEMPT");
+    log_kmsg("    0.000000", "Linux version 2.0.0-dismasmOS (x86_64-pc-none) #1 PREEMPT");
     log_kmsg("    0.000004", "BIOS-provided physical RAM map:");
     log_kmsg("    0.000008", "  BIOS-e820: [mem 0x0000000000000000-0x000000000009ffff] usable");
-    log_kmsg("    0.000012", "  BIOS-e820: [mem 0x0000000000100000-0x0000000003ffffff] usable");
-    log_kmsg("    0.000018", "CPU: Intel/AMD x86 32-Bit Processor (Protected Mode)");
+    log_kmsg("    0.000012", "  BIOS-e820: [mem 0x0000000000100000-0x000000003fffffff] usable");
+    log_kmsg("    0.000018", "CPU: Intel/AMD x86_64 64-Bit Processor (Long Mode Active)");
     log_kmsg("    0.000025", "console [vga0] enabled, 80x25 text mode at 0xB8000");
-    log_kmsg("    0.000032", "GDT: Global Descriptor Table installed (CS=0x08, DS=0x10)");
+    log_kmsg("    0.000032", "GDT: 64-Bit Global Descriptor Table installed (CS=0x08, DS=0x10)");
 
     idt_init();
-    log_kmsg("    0.000040", "IDT: Interrupt Descriptor Table loaded (256 gates registered)");
+    log_kmsg("    0.000040", "IDT: 64-Bit Interrupt Descriptor Table loaded (256 gates registered)");
 
     pic_remap(0x20, 0x28);
     log_kmsg("    0.000048", "i8259A: Master/Slave PIC remapped to vectors 0x20-0x2F");
@@ -59,16 +60,19 @@ void kmain(void) {
     log_kmsg("    0.000062", "input: German QWERTZ keymap and AltGr mapping active");
 
     __asm__ volatile("sti");
-    log_kmsg("    0.000070", "system: CPU hardware interrupts enabled (EFLAGS.IF=1)");
+    log_kmsg("    0.000070", "system: CPU hardware interrupts enabled (RFLAGS.IF=1)");
 
     fs_init();
     log_kmsg("    0.000085", "vfs: In-memory filesystem mounted at / (type ramfs)");
 
+    proc_init();
+    log_kmsg("    0.000095", "proc: Process management active, agent service.prf loaded");
+
     log_ok("Mounted In-Memory Root Filesystem.");
-    log_ok("Reached target System Initialization.");
+    log_ok("Started Process Subsystem (service.prf).");
     log_ok("Started German Keyboard Layout Mapping Service.");
     log_ok("Started Console Terminal Driver.");
-    log_ok("Reached target Multi-User System.");
+    log_ok("Reached target 64-Bit System Initialization.");
     log_ok("Started dismasmOS Command Line Shell.");
 
     boot_delay(600000);

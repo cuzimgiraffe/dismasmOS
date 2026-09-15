@@ -1,0 +1,16 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\src",
+    "\\src\\arch",
+    "\\src\\boot",
+    "\\src\\drivers",
+    "\\src\\em",
+    "\\src\\fs",
+    "\\src\\lib",
+    "\\src\\proc",
+    "\\src\\shell"
+  ],
+  "SelectedNode": "\\src\\shell\\shell.c",
+  "PreviewInSolutionExplorer": false
+}

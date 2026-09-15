@@ -34,6 +34,15 @@ char *strcpy(char *dest, const char *src) {
     return dest;
 }
 
+char *strcat(char *dest, const char *src) {
+    char *d = dest;
+    while (*d) {
+        d++;
+    }
+    while ((*d++ = *src++));
+    return dest;
+}
+
 char *strncpy(char *dest, const char *src, size_t n) {
     size_t i;
     for (i = 0; i < n && src[i] != '\0'; i++) {
@@ -127,4 +136,38 @@ void itoa(int n, char *str) {
         start++;
         end--;
     }
+}
+
+void utoa_hex(uint64_t n, char *str) {
+    char digits[] = "0123456789ABCDEF";
+    char buf[17];
+    int i = 0;
+    if (n == 0) {
+        str[0] = '0';
+        str[1] = '\0';
+        return;
+    }
+    while (n > 0) {
+        buf[i++] = digits[n & 0xF];
+        n >>= 4;
+    }
+    for (int j = 0; j < i; j++) {
+        str[j] = buf[i - 1 - j];
+    }
+    str[i] = '\0';
+}
+
+int isspace(char c) {
+    return (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f');
+}
+
+int isalpha(char c) {
+    return ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
+}
+
+int tolower(int c) {
+    if (c >= 'A' && c <= 'Z') {
+        return c + ('a' - 'A');
+    }
+    return c;
 }
