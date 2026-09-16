@@ -80,14 +80,14 @@ dismasmOS initializes from a Multiboot 1 compliant bootloader (GRUB 2) and trans
 
 ### Centralized System Version & Build Configuration
 
-To enable rapid and effortless version increments without having to search across the codebase, both `SYSTEM_VERSION` and `SYSTEM_BUILD` are declared as clean global variables directly at the very top of [`src/shell/shell.c`](file:///C:/Users/spemg/OneDrive/Desktop/dismasmOS/src/shell/shell.c#L1-L2):
+To enable rapid and effortless version increments without having to search across the codebase, both `SYSTEM_VERSION` and `SYSTEM_BUILD` are declared as clean global variables directly at the very top of [`src/shell/shell.c`]:
 
 ```c
-const char *SYSTEM_VERSION = "1.2";
-const char *SYSTEM_BUILD   = "2026";
+const char *SYSTEM_VERSION = "version here";
+const char *SYSTEM_BUILD   = "build here";
 ```
 
-These variables are exported via [`include/shell.h`](file:///C:/Users/spemg/OneDrive/Desktop/dismasmOS/include/shell.h) (`extern const char *SYSTEM_VERSION;`) and consumed across kernel telemetry, shell startup banners, shutdown status screens, and system information utilities.
+These variables are exported via [`include/shell.h`] (`extern const char *SYSTEM_VERSION;`) and consumed across kernel telemetry, shell startup banners, shutdown status screens, and system information utilities.
 
 ---
 
