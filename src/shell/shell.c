@@ -1,3 +1,6 @@
+const char *SYSTEM_VERSION = "1.2";
+const char *SYSTEM_BUILD   = "VF001.02.0.2026";
+
 #include "shell.h"
 #include "vga.h"
 #include "kbd.h"
@@ -11,6 +14,35 @@
 #define MAX_ARGS 16
 
 extern uint8_t _kernel_start, _text_end, _rodata_end, _data_end, _kernel_end;
+
+static char shell_cwd[FS_MAX_PATH] = "/home";
+
+static void sys_shutdown(void) {
+    vga_clear();
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("dismasmOS ");
+    vga_puts(SYSTEM_VERSION);
+    vga_puts(" is shutting down...\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_puts("Flushing filesystem buffers... [  OK  ]\n");
+    vga_puts("Stopping background agents... [  OK  ]\n");
+    vga_puts("Preparing hardware power-off... [  OK  ]\n\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("System halted. It is now safe to power off your machine.\n");
+
+    outw(0x604, 0x2000);
+    outw(0xB004, 0x2000);
+    outw(0x4004, 0x3400);
+    outb(0xF4, 0x00);
+
+    __asm__ volatile (
+        "cli\n\t"
+        "1:\n\t"
+        "hlt\n\t"
+        "jmp 1b\n\t"
+        : : : "memory"
+    );
+}
 
 static void sys_reboot(void) {
     uint8_t temp;
@@ -199,27 +231,34 @@ static void cmd_lang(int argc, char **argv) {
         kbd_set_layout(KBD_LAYOUT_EN);
         vga_puts("switched to: en\n");
     } else {
-        vga_puts("- unknown -'");
+        vga_puts("- unknown - '");
         vga_puts(argv[1]);
         vga_puts("'. use 'de' or 'en'\n");
     }
 }
 
 static void cmd_help(void) {
-    vga_puts("Available commands (13):\n");
-    vga_puts("  help    - get help\n");
-    vga_puts("  clear   - clearence\n");
-    vga_puts("  echo    - print or redirect into file\n");
-    vga_puts("  ls      - list files\n");
-    vga_puts("  cat     - display file content\n");
-    vga_puts("  grep    - search pattern in file\n");
-    vga_puts("  touch   - empty file creation\n");
-    vga_puts("  em      - vi-style text editor\n");
-    vga_puts("  pr      - process management (start, kill, -c (comment), status)\n");
-    vga_puts("  uname   - get system info\n");
-    vga_puts("  MemRep  - memory allocation report in KiB\n");
-    vga_puts("  lang    - switch keyboard layout\n");
-    vga_puts("  reboot  - reboot machine\n");
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("dismasmOS 1.2 Available Commands (17):\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_puts("  help      - display available commands\n");
+    vga_puts("  clear     - clear console screen\n");
+    vga_puts("  lsf       - list files and dirs (flags: -s size in KiB & hex, -p perms)\n");
+    vga_puts("  cd        - change working directory\n");
+    vga_puts("  makedir   - create a new directory\n");
+    vga_puts("  changes   - view filesystem access and modification audit log\n");
+    vga_puts("  em        - vi-style text editor (Alt for commands: ;wsc, ;q, ;s, ;-m)\n");
+    vga_puts("  cat       - display file content\n");
+    vga_puts("  echo      - print or redirect text into file (> file)\n");
+    vga_puts("  touch     - create empty file\n");
+    vga_puts("  rm        - remove file or directory\n");
+    vga_puts("  grep      - search pattern in file\n");
+    vga_puts("  pr        - process management (start, kill, -c, status)\n");
+    vga_puts("  uname     - system information\n");
+    vga_puts("  MemRep    - memory allocation report\n");
+    vga_puts("  lang      - switch keyboard layout (de / en)\n");
+    vga_puts("  shutdown  - power off / halt system via hardware assembly\n");
+    vga_puts("  reboot    - reboot machine\n");
 }
 
 static void cmd_echo(int argc, char **argv) {
@@ -232,18 +271,114 @@ static void cmd_echo(int argc, char **argv) {
     vga_putchar('\n');
 }
 
+static void cmd_cd(int argc, char **argv) {
+    if (argc < 2 || strcmp(argv[1], "~") == 0) {
+        strcpy(shell_cwd, "/home");
+        return;
+    }
+    if (strcmp(argv[1], "/") == 0) {
+        strcpy(shell_cwd, "/");
+        return;
+    }
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (fs_is_dir(resolved)) {
+        strncpy(shell_cwd, resolved, FS_MAX_PATH - 1);
+        shell_cwd[FS_MAX_PATH - 1] = '\0';
+    } else {
+        vga_puts("cd: no such directory: ");
+        vga_puts(argv[1]);
+        vga_putchar('\n');
+    }
+}
+
+static void cmd_makedir(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: makedir <directory>\n");
+        return;
+    }
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (fs_find(resolved) != NULL || strcmp(resolved, "/") == 0) {
+        vga_puts("makedir: directory already exists: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+        return;
+    }
+
+    if (fs_mkdir(resolved) == 0) {
+        fs_log_change("CREATED", "root", resolved);
+        vga_puts("created directory: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+    } else {
+        vga_puts("makedir: cannot create directory\n");
+    }
+}
+
+static void cmd_lsf(int argc, char **argv) {
+    int show_size = 0;
+    int show_perm = 0;
+    const char *target = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            for (size_t k = 1; argv[i][k] != '\0'; k++) {
+                if (argv[i][k] == 's') {
+                    show_size = 1;
+                } else if (argv[i][k] == 'p') {
+                    show_perm = 1;
+                }
+            }
+        } else {
+            target = argv[i];
+        }
+    }
+
+    char resolved[FS_MAX_PATH];
+    if (target) {
+        fs_resolve_path(shell_cwd, target, resolved);
+    } else {
+        strncpy(resolved, shell_cwd, FS_MAX_PATH - 1);
+        resolved[FS_MAX_PATH - 1] = '\0';
+    }
+
+    if (!fs_is_dir(resolved)) {
+        vga_puts("lsf: not a directory: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+        return;
+    }
+
+    fs_list(resolved, show_size, show_perm);
+}
+
+static void cmd_changes(void) {
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("Filesystem Audit Log (changes):\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    fs_show_changes();
+}
+
 static void cmd_cat(int argc, char **argv) {
     if (argc < 2) {
         vga_puts("usage: cat <file>\n");
         return;
     }
-    struct fs_file *file = fs_find(argv[1]);
-    if (!file) {
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    struct fs_file *file = fs_find(resolved);
+    if (!file || file->is_dir) {
         vga_puts("cat: file not found: ");
         vga_puts(argv[1]);
         vga_putchar('\n');
         return;
     }
+
+    fs_log_change("VIEW", "root", resolved);
     vga_puts(file->data);
     if (file->size > 0 && file->data[file->size - 1] != '\n') {
         vga_putchar('\n');
@@ -255,13 +390,18 @@ static void cmd_grep(int argc, char **argv) {
         vga_puts("usage: grep <pattern> <file>\n");
         return;
     }
-    struct fs_file *file = fs_find(argv[2]);
-    if (!file) {
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[2], resolved);
+
+    struct fs_file *file = fs_find(resolved);
+    if (!file || file->is_dir) {
         vga_puts("grep: file not found: ");
         vga_puts(argv[2]);
         vga_putchar('\n');
         return;
     }
+
+    fs_log_change("VIEW", "root", resolved);
 
     char line[256];
     size_t line_idx = 0;
@@ -290,10 +430,35 @@ static void cmd_touch(int argc, char **argv) {
         vga_puts("usage: touch <file>\n");
         return;
     }
-    if (fs_create(argv[1]) != 0) {
-        if (!fs_find(argv[1])) {
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (!fs_find(resolved)) {
+        if (fs_create(resolved) == 0) {
+            fs_log_change("CREATED", "root", resolved);
+        } else {
             vga_puts("touch: cannot create file\n");
         }
+    }
+}
+
+static void cmd_rm(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: rm <file>\n");
+        return;
+    }
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (fs_delete(resolved) == 0) {
+        fs_log_change("DELETED", "root", resolved);
+        vga_puts("removed: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+    } else {
+        vga_puts("rm: file not found: ");
+        vga_puts(argv[1]);
+        vga_putchar('\n');
     }
 }
 
@@ -349,7 +514,10 @@ static void cmd_em(int argc, char **argv) {
         vga_puts("usage: em <file>\n");
         return;
     }
-    em_run(argv[1]);
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    em_run(resolved);
     vga_clear();
 }
 
@@ -382,8 +550,16 @@ static void execute_command(int argc, char **argv) {
         vga_clear();
     } else if (strcmp(argv[0], "echo") == 0) {
         cmd_echo(argc, argv);
-    } else if (strcmp(argv[0], "ls") == 0) {
-        fs_list();
+    } else if (strcmp(argv[0], "lsf") == 0) {
+        cmd_lsf(argc, argv);
+    } else if (strcmp(argv[0], "cd") == 0) {
+        cmd_cd(argc, argv);
+    } else if (strcmp(argv[0], "makedir") == 0) {
+        cmd_makedir(argc, argv);
+    } else if (strcmp(argv[0], "changes") == 0) {
+        cmd_changes();
+    } else if (strcmp(argv[0], "rm") == 0) {
+        cmd_rm(argc, argv);
     } else if (strcmp(argv[0], "cat") == 0) {
         cmd_cat(argc, argv);
     } else if (strcmp(argv[0], "grep") == 0) {
@@ -400,6 +576,8 @@ static void execute_command(int argc, char **argv) {
         cmd_pr(argc, argv);
     } else if (strcmp(argv[0], "em") == 0) {
         cmd_em(argc, argv);
+    } else if (strcmp(argv[0], "shutdown") == 0) {
+        sys_shutdown();
     } else if (strcmp(argv[0], "reboot") == 0) {
         sys_reboot();
     } else {
@@ -412,6 +590,9 @@ static void execute_command(int argc, char **argv) {
 static void print_prompt(void) {
     vga_set_color(VGA_COLOR_RED, VGA_COLOR_BLACK);
     vga_puts("root@admin@dismasmOS");
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_putchar(':');
+    vga_puts(shell_cwd);
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     vga_puts(" | >>> ");
 }
@@ -459,15 +640,23 @@ static void handle_line(char *cmd_buf) {
                 }
             }
 
-            if (!fs_find(target)) {
-                if (fs_create(target) != 0) {
+            char resolved_target[FS_MAX_PATH];
+            fs_resolve_path(shell_cwd, target, resolved_target);
+
+            int exists = (fs_find(resolved_target) != NULL);
+            if (!exists) {
+                if (fs_create(resolved_target) != 0) {
                     vga_puts("error: cannot create file: ");
-                    vga_puts(target);
+                    vga_puts(resolved_target);
                     vga_putchar('\n');
                     return;
                 }
+                fs_log_change("CREATED", "root", resolved_target);
             }
-            fs_write(target, text, strlen(text));
+            fs_write(resolved_target, text, strlen(text));
+            if (exists) {
+                fs_log_change("EDITED", "root", resolved_target);
+            }
             return;
         }
     }
@@ -480,7 +669,9 @@ static void handle_line(char *cmd_buf) {
 void shell_init(void) {
     vga_clear();
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_puts("dismasmOS 1.2 (x86_64 Long Mode 64-Bit) - Microkernel\n");
+    vga_puts("dismasmOS ");
+    vga_puts(SYSTEM_VERSION);
+    vga_puts(" (x86_64 Long Mode 64-Bit) - Microkernel\n");
     vga_puts("Type 'help' for help.\n\n");
     print_prompt();
 }
@@ -490,7 +681,7 @@ void shell_run(void) {
     size_t cmd_len = 0;
 
     while (1) {
-        char c = kbd_getchar();
+        int c = kbd_getchar();
         if (c == '\n') {
             vga_putchar('\n');
             cmd_buf[cmd_len] = '\0';
@@ -502,10 +693,10 @@ void shell_run(void) {
                 cmd_len--;
                 vga_backspace();
             }
-        } else if ((uint8_t)c >= 32 && (uint8_t)c != 127) {
+        } else if ((c >= 32 && c <= 255) && c != 127) {
             if (cmd_len < CMD_MAX_LEN - 1) {
-                cmd_buf[cmd_len++] = c;
-                vga_putchar(c);
+                cmd_buf[cmd_len++] = (char)c;
+                vga_putchar((char)c);
             }
         }
     }

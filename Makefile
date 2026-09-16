@@ -33,8 +33,8 @@ iso: $(BIN)
 	rm -rf isodir
 
 clean:
-	rm -f $(OBJ) $(BIN) $(ISO)
-	rm -rf isodir
+	-rm -f $(OBJ) $(BIN) $(ISO)
+	-rm -rf isodir
 
 qemu: $(ISO)
 	qemu-system-x86_64 -cdrom $(ISO)

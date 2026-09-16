@@ -25,6 +25,8 @@ enum vga_color {
     VGA_COLOR_WHITE = 15,
 };
 
+#define VGA_COLOR_YELLOW VGA_COLOR_LIGHT_BROWN
+
 void vga_init(void);
 void vga_clear(void);
 void vga_set_color(uint8_t fg, uint8_t bg);
