@@ -15,7 +15,7 @@
 
 ## Abstract
 
-**dismasmOS 1.2** is an ultra-lean, deterministic, freestanding x86_64 Long Mode operating system implemented strictly in ISO C99 and GNU Assembler for the AMD64/Intel 64 architectural specification. Operating entirely without reliance on the C standard library (`-nostdlib`, `-ffreestanding`), third-party runtimes, or secondary userland abstractions, dismasmOS establishes an end-to-end bare-metal compute environment featuring:
+**dismasmOS** is an ultra-lean, deterministic, freestanding x86_64 Long Mode operating system implemented strictly in ISO C99 and GNU Assembler for the AMD64/Intel 64 architectural specification. Operating entirely without reliance on the C standard library (`-nostdlib`, `-ffreestanding`), third-party runtimes, or secondary userland abstractions, dismasmOS establishes an end-to-end bare-metal compute environment featuring:
 
 * **64-Bit Long Mode Microkernel**: 4-level paging (PML4, PDPT, PD) with a 1 GiB identity-mapped address space using 2 MiB huge pages, custom 64-bit Global Descriptor Table (GDT64), and a 256-gate 64-bit Interrupt Descriptor Table (IDT).
 * **Deterministic Input Engine**: Fully compliant German DIN 2137-2 (QWERTZ) and US (QWERTY) keyboard mapping using C99 designated initializers, complete AltGr decoding, ISO-key `< > |` support, and extended PS/2 scancode decoding (`0xE0`) for dedicated hardware Arrow Keys and Alt navigation.
