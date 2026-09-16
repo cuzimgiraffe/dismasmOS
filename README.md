@@ -8,49 +8,56 @@
   | (_| | \__ \ | | | | | (_| \__ \ | | | | |  | |__| |____) |
    \__,_|_|___/_| |_| |_|\__,_|___/_| |_| |_|   \____/|_____/ 
    ===========================================================
-   Deterministic Bare-Metal Freestanding IA-32 Operating System
+   Deterministic Bare-Metal Freestanding x86_64 64-Bit Kernel
 ```
 
 ---
 
 ## Abstract
 
-**dismasmOS** is an ultra-lean, deterministic, freestanding monolithic x86 operating system implemented strictly in ISO C99 and GNU Assembler for the IA-32 architectural specification. Operating entirely without reliance on the C standard library (`-nostdlib`, `-ffreestanding`), third-party runtimes, or secondary userland abstractions, dismasmOS establishes an end-to-end bare-metal compute environment within an unpaged 4 GiB flat memory model. 
+**dismasmOS 1.2** is an ultra-lean, deterministic, freestanding x86_64 Long Mode operating system implemented strictly in ISO C99 and GNU Assembler for the AMD64/Intel 64 architectural specification. Operating entirely without reliance on the C standard library (`-nostdlib`, `-ffreestanding`), third-party runtimes, or secondary userland abstractions, dismasmOS establishes an end-to-end bare-metal compute environment featuring:
 
-The system implements a custom Global Descriptor Table (GDT), a 256-entry Interrupt Descriptor Table (IDT), a remapped dual-8259 Programmable Interrupt Controller (PIC) cascaded architecture, a hardware-polled / interrupt-driven Intel 8042 PS/2 controller driver featuring full German DIN 2137-2 (QWERTZ) keyboard mapping with AltGr key combinations, a direct memory-mapped VGA 80x25 text-mode console with hardware cursor register synchronization, an in-memory linear virtual filesystem (RAMFS), a modular CLI shell supporting stream parsing and file search, and an authentic Debian-style kernel telemetry (`dmesg` / `systemd`) boot logging facility.
-
-The compiled binary footprint of the kernel image totals less than 19 KiB, achieving immediate sub-millisecond cold boot sequences and a near-zero idle power state via continuous processor halt (`HLT`) scheduling.
+* **64-Bit Long Mode Microkernel**: 4-level paging (PML4, PDPT, PD) with a 1 GiB identity-mapped address space using 2 MiB huge pages, custom 64-bit Global Descriptor Table (GDT64), and a 256-gate 64-bit Interrupt Descriptor Table (IDT).
+* **Deterministic Input Engine**: Fully compliant German DIN 2137-2 (QWERTZ) and US (QWERTY) keyboard mapping using C99 designated initializers, complete AltGr decoding, ISO-key `< > |` support, and extended PS/2 scancode decoding (`0xE0`) for dedicated hardware Arrow Keys and Alt navigation.
+* **Modern In-Memory Virtual Filesystem (RAMFS)**: Hierarchical directory tree featuring `/home` (user working directory), `/boot` (critical bootloader assets), `/krnl` (kernel core), `/shell` (userland scripts and configurations), and `/etc` (system configuration tables).
+* **Comprehensive Filesystem Audit Logging (`changes`)**: Integrated kernel-level change and access telemetry tracking all `VIEW`, `EDITED`, `CREATED`, and `DELETED` file operations.
+* **Full-Featured Text Editor ("em")**: Direct text writing by default, hardware arrow-key cursor navigation, Alt-key modal command execution (`;wsc`, `;s`, `;q`, `;-m`), integrated spellchecking with typo highlighting, and an interactive graphical system warning modal protecting critical files in `/boot` and `/krnl`.
+* **Hardware Shutdown & Power Management**: Active inline assembly CPU shutdown (`cli; hlt`) coupled with automated ACPI power-off sequences for QEMU, Bochs, and VirtualBox.
+* **Strict Command Suite**: Full deprecation and removal of `ls` in favor of **`lsf`** (featuring `-s` for KiB/Bytes and Hex output and `-p` for permission/rights analysis), alongside `cd`, `makedir`, `rm`, `pr`, `MemRep`, and stream redirection.
 
 ---
 
-## 1. System Architecture Overview
+## 1. System Architecture & Boot Sequence
 
-dismasmOS executes in IA-32 32-Bit Protected Mode at Privilege Level 0 (Ring 0). The hardware initialization pipeline follows a strictly ordered, deterministic sequence that bypasses BIOS real-mode limitations via Multiboot-compliant bootstrapping.
+dismasmOS initializes from a Multiboot 1 compliant bootloader (GRUB 2) and transitions deterministically from 32-bit protected mode into 64-bit Long Mode at Privilege Level 0 (Ring 0).
 
 ```text
 +-----------------------------------------------------------------------------------+
 |                                 PHYSICAL HARDWARE                                 |
-|  [CPU: x86 IA-32]    [VGA: 0xB8000]    [PIC: 8259A Dual]    [KBD: PS/2 8042]      |
+|  [CPU: x86_64 Long Mode] [VGA: 0xB8000] [PIC: Dual 8259A] [KBD: PS/2 8042]       |
 +-----------------------------------------------------------------------------------+
                                          │
                                          ▼
 +-----------------------------------------------------------------------------------+
 |                             BOOTLOADER HANDSHAKE (GRUB)                           |
-|  - Magic: 0x1BADB002                                                              |
+|  - Multiboot 1 Header Magic: 0x1BADB002                                           |
 |  - Flags: ALIGN (bit 0) | MEMINFO (bit 1)                                         |
-|  - Checks: -(MAGIC + FLAGS)                                                       |
 +-----------------------------------------------------------------------------------+
                                          │
                                          ▼
 +-----------------------------------------------------------------------------------+
-|                        EARLY ASSEMBLY STAGE (src/boot/boot.s)                     |
-|  1. Disable Maskable Interrupts (CLI)                                             |
-|  2. Load Custom Segment Descriptors (LGDT gdt_descriptor)                         |
-|  3. Serialize Processor Pipeline & Far Jump (LJMP $0x08, $1f)                      |
-|  4. Normalize Segment Selectors: DS=ES=FS=GS=SS=0x10                              |
-|  5. Allocate 16 KiB 16-byte Aligned Stack Frame (ESP -> stack_top)                |
-|  6. Reset EFLAGS Register                                                         |
-|  7. Call Kernel Entry Point (call kmain)                                          |
+|                     EARLY ASSEMBLY BOOTSTRAP (src/boot/boot.s)                    |
+|  1. Clear EFLAGS & Disable Interrupts (CLI)                                       |
+|  2. Zero Page Tables (PML4, PDPT, PD) in .bss section                             |
+|  3. Build 4-Level Paging: PML4[0] -> PDPT, PDPT[0] -> PD                         |
+|  4. Identity-map 1 GiB using 512 x 2 MiB Large Page Entries (0x83 Flag)           |
+|  5. Enable Physical Address Extension (CR4.PAE = 1)                              |
+|  6. Enable Long Mode in EFER MSR (MSR 0xC0000080, Bit 8 LME = 1)                  |
+|  7. Activate Paging and Protected Subsystems (CR0.PG = 1, CR0.PE = 1)             |
+|  8. Load 64-Bit GDT (LGDT gdt64_ptr)                                              |
+|  9. Far Jump to 64-Bit Long Mode Code Segment (LJMP $0x08, $long_mode_start)      |
+| 10. Setup 32 KiB 16-byte Aligned 64-Bit Stack (RSP -> stack_top)                  |
+| 11. Call Kernel Entry Point: call kmain                                           |
 +-----------------------------------------------------------------------------------+
                                          │
                                          ▼
@@ -59,386 +66,349 @@ dismasmOS executes in IA-32 32-Bit Protected Mode at Privilege Level 0 (Ring 0).
 |  ┌─────────────────────────────────────────────────────────────────────────────┐  |
 |  │  1. Video Subsystem: vga_init() -> Direct Framebuffer Map (0xB8000)         │  |
 |  │  2. Telemetry Stage 1: Debian-Style Kernel Log Banner [    0.000000]        │  |
-|  │  3. Trap Management: idt_init() -> Setup 256 IDT Gates                      │  |
+|  │  3. Trap Management: idt_init() -> Setup 256 64-Bit IDT Gates               │  |
 |  │  4. Controller Remap: pic_remap(0x20, 0x28) -> Dual 8259 PIC ICW1-ICW4      │  |
 |  │  5. Input Subsystem: kbd_init() -> DIN 2137-2 Keymap & Unmask IRQ1          │  |
-|  │  6. Interrupt Activation: STI (EFLAGS.IF = 1)                               │  |
-|  │  7. Storage Engine: fs_init() -> Root RAMFS Mount & Payload Population      │  |
-|  │  8. Telemetry Stage 2: systemd Unit OK Assertions [  OK  ]                  │  |
-|  │  9. Shell Engine: shell_init() & shell_run() Event Loop                     │  |
+|  │  6. Interrupt Activation: STI (RFLAGS.IF = 1)                               │  |
+|  │  7. Storage Engine: fs_init() -> Mount /home, /boot, /krnl, /shell, /etc    │  |
+|  │  8. Process Subsystem: proc_init() -> Initialize process table & service.prf│  |
+|  │  9. Telemetry Stage 2: systemd Unit OK Assertions [  OK  ]                  │  |
+|  │ 10. Shell Engine: shell_init() & shell_run() Event Loop                     │  |
 |  └─────────────────────────────────────────────────────────────────────────────┘  |
 +-----------------------------------------------------------------------------------+
 ```
 
+### Centralized System Version & Build Configuration
+
+To enable rapid and effortless version increments without having to search across the codebase, both `SYSTEM_VERSION` and `SYSTEM_BUILD` are declared as clean global variables directly at the very top of [`src/shell/shell.c`](file:///C:/Users/spemg/OneDrive/Desktop/dismasmOS/src/shell/shell.c#L1-L2):
+
+```c
+const char *SYSTEM_VERSION = "1.2";
+const char *SYSTEM_BUILD   = "2026";
+```
+
+These variables are exported via [`include/shell.h`](file:///C:/Users/spemg/OneDrive/Desktop/dismasmOS/include/shell.h) (`extern const char *SYSTEM_VERSION;`) and consumed across kernel telemetry, shell startup banners, shutdown status screens, and system information utilities.
+
 ---
 
-## 2. Memory Topology and Linker Mapping
+## 2. 64-Bit Paging & Memory Topology
 
-The physical address space is structured to prevent collision with legacy IBM PC BIOS reservations, Video Display Memory, and ACPI tables. The kernel image is loaded at `0x00100000` (1 MiB), above the conventional real-mode memory boundary.
+### 4-Level Paging Architecture
+
+dismasmOS implements hardware-enforced 4-level paging:
+* **PML4 (Page Map Level 4)**: Located at `pml4_table`, entry `[0]` points to the Page Directory Pointer Table (`pdpt_table`) with flags `0x03` (Present | Writable).
+* **PDPT (Page Directory Pointer Table)**: Entry `[0]` points to the Page Directory (`pd_table`) with flags `0x03` (Present | Writable).
+* **PD (Page Directory)**: Contains 512 contiguous entries of 2 MiB each, identity-mapping physical addresses `0x0000000000000000` through `0x000000003FFFFFFF` (first 1 GiB of RAM) using flag `0x83` (Present | Writable | Page Size 2 MiB).
 
 ### Physical Memory Allocation Map
 
-| Address Range | Allocation Size | Designation / Subsystem | Cache / Attributes |
+| Address Range | Size | Subsystem / Component | Attributes |
 | :--- | :--- | :--- | :--- |
-| `0x00000000 - 0x000003FF` | 1 KiB | Real Mode Interrupt Vector Table (IVT) | Legacy Reserved |
-| `0x00000400 - 0x000004FF` | 256 Bytes | BIOS Data Area (BDA) | Legacy Reserved |
-| `0x00007E00 - 0x0007FFFF` | ~480 KiB | Conventional Low Memory (Unused Buffer) | Read/Write |
-| `0x000A0000 - 0x000B7FFF` | 96 KiB | VGA Graphics Display Buffer (EGA/VGA Plane) | Memory Mapped I/O |
-| `0x000B8000 - 0x000BFFFF` | 32 KiB | VGA Color Text Mode Framebuffer | MMIO (Dual-Port RAM) |
-| `0x000C0000 - 0x000C7FFF` | 32 KiB | Video ROM BIOS Extension | Read-Only |
-| `0x000E0000 - 0x000FFFFF` | 128 KiB | System BIOS & ACPI RSDP Physical Tables | Read-Only |
-| `0x00100000 - 0x00101FFF` | ~8 KiB | **dismasmOS `.text` Section (Code + Entry)** | Executable / Read-Only |
-| `0x00102000 - 0x00102FFF` | ~4 KiB | **dismasmOS `.rodata` Section (Constants)** | Read-Only |
-| `0x00103000 - 0x00103FFF` | ~4 KiB | **dismasmOS `.data` Section (Initialized)** | Read/Write |
-| `0x00104000 - 0x00118E60` | ~83 KiB | **dismasmOS `.bss` (IDT, VFS Table, 16KiB Stack)** | Zero-Initialized / RW |
-
-### Linker Script Specification (`linker.ld`)
-
-```ld
-ENTRY(_start)
-
-SECTIONS
-{
-    . = 1M;
-
-    .text BLOCK(4K) : ALIGN(4K)
-    {
-        *(.multiboot)
-        *(.text)
-    }
-
-    .rodata BLOCK(4K) : ALIGN(4K)
-    {
-        *(.rodata*)
-    }
-
-    .data BLOCK(4K) : ALIGN(4K)
-    {
-        *(.data)
-    }
-
-    .bss BLOCK(4K) : ALIGN(4K)
-    {
-        *(COMMON)
-        *(.bss)
-    }
-}
-```
-
-The linker explicitly groups the `.multiboot` header at the foremost boundary of the `.text` segment, guaranteeing placement within the first 8192 bytes of the ELF executable as mandated by the Multiboot Specification version 0.6.96.
+| `0x00000000 - 0x0007FFFF` | 512 KiB | Low Memory (IVT, BDA, Unused Buffer) | Reserved / Identity Mapped |
+| `0x00080000 - 0x0009FFFF` | 128 KiB | EBDA / BIOS Reserved Area | Reserved |
+| `0x000A0000 - 0x000BFFFF` | 128 KiB | VGA Framebuffer (`0xB8000` Text Mode) | MMIO (Dual-Port RAM) |
+| `0x000C0000 - 0x000FFFFF` | 256 KiB | Video ROM & System BIOS Firmware | Read-Only |
+| `0x00100000 - 0x00101FFF` | ~8 KiB | **dismasmOS `.text` (64-Bit Code)** | Executable / Read-Only |
+| `0x00102000 - 0x00102FFF` | ~4 KiB | **dismasmOS `.rodata` (Constants & Strings)** | Read-Only |
+| `0x00103000 - 0x00103FFF` | ~4 KiB | **dismasmOS `.data` (Initialized Variables)**| Read/Write |
+| `0x00104000 - 0x00118000` | ~80 KiB | **dismasmOS `.bss` (Page Tables, RAMFS, 32KiB Stack)**| Zero-Initialized / RW |
+| `0x00118000 - 0x3FFFFFFF` | ~1022 MiB | **Identity-Mapped Physical Free Memory** | Available RAM |
 
 ---
 
-## 3. Microarchitectural CPU State & GDT Specification
+## 3. Microarchitectural CPU State, GDT64 & IDT64
 
-To guarantee isolation from intermediate bootloader assumptions (such as GRUB 2 or SeaBIOS GDT variations that trigger hypervisor triple faults under Windows Hyper-V / VirtualBox Native Execution Manager), dismasmOS establishes an independent Global Descriptor Table immediately upon entry.
+### 64-Bit Global Descriptor Table (GDT64)
 
-### GDT Entry Bitfield Layout
+dismasmOS establishes a flat 64-bit Long Mode descriptor table with three 8-byte descriptors:
 
-Every GDT segment descriptor comprises an 8-byte (64-bit) structure with the following topology:
+1. **Null Descriptor (`0x00`)**: `0x0000000000000000`
+2. **Kernel 64-Bit Code Descriptor (`0x08`)**: `0x00209A0000000000`
+   * Base = 0, Limit = 0 (Ignored in 64-bit mode)
+   * Access: Present (`P=1`), Ring 0 (`DPL=00`), Code Segment (`S=1`), Executable/Readable (`Type=1010b`)
+   * Flags: Long Mode Code (`L=1`), Default Size (`D=0`)
+3. **Kernel 64-Bit Data Descriptor (`0x10`)**: `0x0000920000000000`
+   * Base = 0, Limit = 0
+   * Access: Present (`P=1`), Ring 0 (`DPL=00`), Data Segment (`S=1`), Read/Write (`Type=0010b`)
+
+### 64-Bit Interrupt Descriptor Table (IDT64)
+
+The 64-bit IDT consists of 256 16-byte gate descriptors:
 
 ```text
- 63             56 55 54 53 52 51    48 47       40 39             16 15              0
-+-----------------+--+--+--+--+--------+-----------+-----------------+-----------------+
-|   Base 31..24   | G| D| 0| A| Lim19..| P| DPL| S |   Type 43..40   |   Base 23..0    |
-+-----------------+--+--+--+--+--------+-----------+-----------------+-----------------+
-|                               Limit 15..0                                           |
-+-------------------------------------------------------------------------------------+
+ 127                                           96 95                                           64
++------------------------------------------------+-----------------------------------------------+
+|                    Reserved                    |                 Offset 63..32                 |
++------------------------------------------------+-----------------------------------------------+
+ 63                                            48 47             40 39       35 34  32 31       0
++------------------------------------------------+-----------------+-----------+------+----------+
+|                 Offset 31..16                  | P | DPL | 0 |Type| Reserved  | IST  | Selector |
++------------------------------------------------+-----------------+-----------+------+----------+
+|                                  Offset 15..0                                                  |
++------------------------------------------------------------------------------------------------+
 ```
 
-### Active Segment Descriptors
-
-```text
-Selector 0x0000: Null Descriptor
-0x0000000000000000 -> Base=0x00000000, Limit=0x00000000, Attributes=0x00
-
-Selector 0x0008: Kernel Code Segment Descriptor (Flat 4 GiB)
-0x00CF9A000000FFFF -> Base=0x00000000, Limit=0xFFFFF, Granularity=4KiB (Total: 4 GiB)
-                      P=1, DPL=00b, S=1 (Code/Data), Type=1010b (Execute/Read, Accessed=0)
-                      D=1 (32-Bit Default Operand), L=0 (Not IA-32e)
-
-Selector 0x0010: Kernel Data Segment Descriptor (Flat 4 GiB)
-0x00CF92000000FFFF -> Base=0x00000000, Limit=0xFFFFF, Granularity=4KiB (Total: 4 GiB)
-                      P=1, DPL=00b, S=1 (Code/Data), Type=0010b (Read/Write, Expand-Up)
-                      D=1 (32-Bit Big Data), L=0
-```
-
-### Pipeline Serialization Routine
-
-```asm
-    cli
-    lgdt gdt_descriptor
-    ljmp $0x08, $1f
-1:
-    mov $0x10, %ax
-    mov %ax, %ds
-    mov %ax, %es
-    mov %ax, %fs
-    mov %ax, %gs
-    mov %ax, %ss
-    mov $stack_top, %esp
-```
-
-The far jump (`ljmp $0x08, $1f`) forces the CPU prefetch queue to flush and synchronously reloads the Hidden Segment Register Cache for `CS` with attributes from descriptor index 1.
+Every exception and hardware IRQ (0x00 - 0xFF) is routed through common assembly ISR wrappers in `src/arch/idt_asm.s` that save the 64-bit register context (`rax` through `r15`) and execute `iretq`.
 
 ---
 
-## 4. Interrupt Handling & PIC Architecture
+## 4. Input Subsystem & Dual Keyboard Layout Engine
 
-dismasmOS manages interrupts through a dedicated Interrupt Descriptor Table spanning all 256 vector positions, preventing processor halts on spurious IRQs or legacy timer ticks.
+### German DIN 2137-2 (QWERTZ) & Scancode Mapping
 
-```text
-                               8259A Dual PIC Cascading
-                               
-          +-----------------+                   +-----------------+
-          |    Slave PIC    |                   |   Master PIC    |
-          |  Command: 0xA0  |                   |  Command: 0x20  |
-          |  Data:    0xA1  |                   |  Data:    0x21  |
-          |  Vector:  0x28  |                   |  Vector:  0x20  |
-          +--------+--------+                   +--------+--------+
-                   |                                     |
-                   | IRQ 8-15                            | IRQ 0-7
-                   +--------> IRQ 2 (Cascade Pin) ------>+
-                                                         |
-                                                         v
-                                                   CPU INTR PIN
-                                                         |
-                                                         v
-                                                   IDT Vector Table
-                                                 (Vectors 0x20 - 0x2F)
+The keyboard driver in `src/arch/kbd.c` interfaces directly with the Intel 8042 PS/2 microcontroller on I/O ports `0x60` (Data) and `0x64` (Status/Command).
+
+To prevent index drift or off-by-one errors common in legacy array tables, all scancodes are mapped using **C99 Designated Initializers**:
+
+```c
+static const int kbd_map_de_normal[128] = {
+    [0x01] = 27,
+    [0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4',
+    [0x06] = '5', [0x07] = '6', [0x08] = '7', [0x09] = '8',
+    [0x0A] = '9', [0x0B] = '0', [0x0C] = (char)0xE1, [0x0D] = '`',
+    [0x0E] = '\b', [0x0F] = '\t',
+    [0x10] = 'q', [0x11] = 'w', [0x12] = 'e', [0x13] = 'r',
+    [0x14] = 't', [0x15] = 'z', [0x16] = 'u', [0x17] = 'i',
+    [0x18] = 'o', [0x19] = 'p', [0x1A] = (char)0x81, [0x1B] = '+',
+    [0x1C] = '\n',
+    [0x1E] = 'a', [0x1F] = 's', [0x20] = 'd', [0x21] = 'f',
+    [0x22] = 'g', [0x23] = 'h', [0x24] = 'j', [0x25] = 'k',
+    [0x26] = 'l', [0x27] = (char)0x94, [0x28] = (char)0x84,
+    [0x29] = '^',
+    [0x2B] = '#',
+    [0x2C] = 'y', [0x2D] = 'x', [0x2E] = 'c', [0x2F] = 'v',
+    [0x30] = 'b', [0x31] = 'n', [0x32] = 'm',
+    [0x33] = ',', [0x34] = '.', [0x35] = '-',
+    [0x37] = '*', [0x39] = ' ',
+    [0x4A] = '-', [0x4E] = '+',
+    [0x56] = '<',  /* ISO 105-key specific keycode */
+};
 ```
 
-### PIC Initialization Command Words (ICW)
+### Special Character & AltGr Mapping Reference
 
-Both Intel 8259A controllers undergo four-stage state initialization:
-
-1. **ICW1 (`0x11`)**: Assert initialization bit (`0x10`) and dictate that ICW4 is expected (`0x01`).
-2. **ICW2 (Offsets)**: 
-   - Master PIC vector offset programmed to `0x20` (Interrupts 32–39).
-   - Slave PIC vector offset programmed to `0x28` (Interrupts 40–47).
-3. **ICW3 (Cascade Configuration)**:
-   - Master written with `0x04` (Bit 2 asserted: Slave connection established at IRQ2).
-   - Slave written with `0x02` (Binary identification notation: connected to Master IRQ2).
-4. **ICW4 (`0x01`)**: Set 8086/88 microprocessor architecture mode.
-5. **OCW1 (Interrupt Mask Registers - IMR)**:
-   - Master IMR written with `0xFD` (`11111101b`): All lines masked except **IRQ1 (PS/2 Keyboard)**.
-   - Slave IMR written with `0xFF` (`11111111b`): Entire slave cascaded domain masked.
-
-### IDT Gate Structure (32-Bit Interrupt Gate)
-
-```text
- 31                             16 15 14 13 12 11   8 7            0
-+---------------------------------+--+-----+--+------+--------------+
-|       Offset High (16..31)      | P| DPL | 0| Type | Reserved (0) |
-+---------------------------------+--+-----+--+------+--------------+
-|       Segment Selector (0x08)   |       Offset Low (0..15)        |
-+---------------------------------+---------------------------------+
-```
-
-- **Present (P)**: `1`
-- **Privilege (DPL)**: `00b` (Kernel Ring 0 Execution)
-- **Type**: `0xE` (32-bit Interrupt Gate; disables interrupts automatically via `EFLAGS.IF=0` upon trap).
-
-### Context Preservation & Assembly ISR Stubs
-
-```asm
-isr_kbd_entry:
-    pushal
-    cld
-    mov $0x10, %ax
-    mov %ax, %ds
-    mov %ax, %es
-    mov %ax, %fs
-    mov %ax, %gs
-    call kbd_handler
-    popal
-    iret
-```
-
-The assembly stub guarantees:
-- Total register state preservation (`EAX`, `ECX`, `EDX`, `EBX`, `ESP`, `EBP`, `ESI`, `EDI`) via `pushal`.
-- C standard ABI compliance with `cld` (Direction Flag set to auto-incrementing memory string pointers).
-- Segment register validation against any potential corruption.
-- Clean interrupt return (`iret`) popping `EIP`, `CS`, and `EFLAGS` atomically.
-
----
-
-## 5. Input Subsystem & German DIN 2137-2 Layout
-
-Keyboard processing operates via an asynchronous, event-driven driver decoding PS/2 Scancode Set 1 make and break codes.
-
-### Physical Scancode Transformation
-
-```text
-[Key Press] ---> PS/2 Port 0x60 ---> IRQ1 ---> isr_kbd_entry ---> kbd_handler()
-                                                                         │
-    ┌────────────────────────────────────────────────────────────────────┘
-    ▼
-Check Extended Prefix (0xE0)
-    │
-    ├── Yes: Set extended state flag; decode AltGr Make (0x38) / Break (0xB8)
-    │
-    └── No:  Evaluate Break Bit (Scancode & 0x80)
-                 │
-                 ├── Make Code: Translate via Active Modifier Map
-                 │              (kbd_map_normal / kbd_map_shifted / altgr_map)
-                 │              Enqueue character to 256-byte Circular Buffer
-                 │
-                 └── Break Code: Clear Shift/Modifier flags
-```
-
-### DIN 2137-2 (German QWERTZ) Scancode Translation Matrix
-
-dismasmOS converts hardware scancodes directly into IBM Code Page 437 (CP437) binary indices:
-
-| Scancode (Hex) | Key Position | Normal Glyph | Shift Glyph | AltGr Glyph | CP437 Binary Code |
+| Scancode | Key Position | Normal | Shift | AltGr | CP437 Character / Hex Code |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `0x02` | Number 1 | `1` | `!` | - | `0x31` / `0x21` |
-| `0x03` | Number 2 | `2` | `"` | - | `0x32` / `0x22` |
-| `0x04` | Number 3 | `3` | `§` | - | `0x33` / `0x15` |
-| `0x08` | Number 7 | `7` | `/` | `{` | `0x37` / `0x2F` / `0x7B` |
-| `0x09` | Number 8 | `8` | `(` | `[` | `0x38` / `0x28` / `0x5B` |
-| `0x0A` | Number 9 | `9` | `)` | `]` | `0x39` / `0x29` / `0x5D` |
-| `0x0B` | Number 0 | `0` | `=` | `}` | `0x30` / `0x3D` / `0x7D` |
-| `0x0C` | Key `ß` | `ß` | `?` | `\` | `0xE1` / `0x3F` / `0x5C` |
-| `0x10` | Letter Q | `q` | `Q` | `@` | `0x71` / `0x51` / `0x40` |
-| `0x15` | Letter Z (QWERTZ) | **`z`** | **`Z`** | - | `0x7A` / `0x5A` |
+| `0x03` | Number 2 | `2` | `"` | `²` | `0xFD` (Superscript 2) |
+| `0x04` | Number 3 | `3` | `§` | `³` | `0x15` (Section §) / `0xFC` (Superscript 3) |
+| `0x08` | Number 7 | `7` | `/` | `{` | `0x7B` |
+| `0x09` | Number 8 | `8` | `(` | `[` | `0x5B` |
+| `0x0A` | Number 9 | `9` | `)` | `]` | `0x5D` |
+| `0x0B` | Number 0 | `0` | `=` | `}` | `0x7D` |
+| `0x0C` | Key `ß` | `ß` | `?` | `\` | `0xE1` (Sharp s ß) / `0x5C` |
+| `0x10` | Letter Q | `q` | `Q` | `@` | `0x40` |
+| `0x15` | Letter Z | **`z`** | **`Z`** | - | QWERTZ swapped with Y |
 | `0x1A` | Key `Ü` | `ü` | `Ü` | - | `0x81` / `0x9A` |
-| `0x1B` | Key `+` | `+` | `*` | `~` | `0x2B` / `0x2A` / `0x7E` |
+| `0x1B` | Key `+` | `+` | `*` | `~` | `0x7E` |
 | `0x27` | Key `Ö` | `ö` | `Ö` | - | `0x94` / `0x99` |
 | `0x28` | Key `Ä` | `ä` | `Ä` | - | `0x84` / `0x8E` |
-| `0x29` | Key `^` | `^` | `°` | - | `0x5E` / `0xF8` |
-| `0x2C` | Letter Y (QWERTZ) | **`y`** | **`Y`** | - | `0x79` / `0x59` |
+| `0x29` | Key `^` | `^` | `°` | - | `0x5E` / `0xF8` (Degree °) |
+| `0x2B` | Key `#` | `#` | `'` | - | `0x23` / `0x27` |
+| `0x2C` | Letter Y | **`y`** | **`Y`** | - | QWERTZ swapped with Z |
+| `0x32` | Letter M | `m` | `M` | `µ` | `0xE6` (Micro µ) |
 | `0x35` | Key `-` | `-` | `_` | - | `0x2D` / `0x5F` |
-| `0x56` | Key `<` (ISO) | `<` | `>` | `\|` | `0x3C` / `0x3E` / `0x7C` |
+| `0x56` | Key `<` | `<` | `>` | `\|` | `0x3C` / `0x3E` / `0x7C` |
 
-### Deterministic Low-Power Wait Loop
+### Extended Scancode Decoding (`0xE0`) & Arrow Keys
 
-The input consumer executes an atomic halt wait loop:
+The driver uses a two-stage state machine to decode two-byte escape sequences prefixed by `0xE0`:
 
 ```c
-char kbd_getchar(void) {
-    while (kbd_head == kbd_tail) {
-        __asm__ volatile("sti; hlt");
-    }
-    char c = kbd_buffer[kbd_tail];
-    kbd_tail = (kbd_tail + 1) % KBD_BUF_SIZE;
-    return c;
-}
+#define KEY_UP       0x8001
+#define KEY_DOWN     0x8002
+#define KEY_LEFT     0x8003
+#define KEY_RIGHT    0x8004
+#define KEY_HOME     0x8005
+#define KEY_END      0x8006
+#define KEY_PGUP     0x8007
+#define KEY_PGDN     0x8008
+#define KEY_INSERT   0x8009
+#define KEY_DELETE   0x800A
+#define KEY_ALT      0x800B
 ```
 
-When no input is queued in the circular buffer (`kbd_head == kbd_tail`), the CPU transitions into state `C1` via the `HLT` opcode. Host virtualization hypervisors detect the condition and relinquish host CPU threads, keeping idle processor usage below 0.01%. Upon IRQ1 delivery, the CPU returns immediately after `hlt`, extracts the buffered character, and advances the FIFO tail.
+* **Arrow Keys**: Up (`0xE0 0x48`), Down (`0xE0 0x50`), Left (`0xE0 0x4B`), Right (`0xE0 0x4D`).
+* **Navigation**: Delete (`0xE0 0x53`), Home (`0xE0 0x47`), End (`0xE0 0x4F`), PageUp (`0xE0 0x49`), PageDown (`0xE0 0x51`).
+* **Alt Key Isolation**: Left Alt (scancode `0x38` non-extended) immediately triggers `KEY_ALT`, while Right Alt (`0xE0 0x38`) sets the `altgr_pressed` flag, ensuring zero conflict between Alt command hotkeys and AltGr symbol typing.
 
 ---
 
-## 6. Video Output & Telemetry Logging Engine
-
-The display system operates exclusively in IBM 80x25 16-color alphanumeric text mode via direct access to the dual-port Video RAM at address `0x000B8000`.
-
-### VRAM Cell Byte Structure
-
-Every on-screen character occupies exactly 2 bytes (16 bits):
-
-```text
- 15               12 11                8 7                               0
-+-------------------+-------------------+---------------------------------+
-|  Background Color |  Foreground Color |      ASCII / CP437 Character    |
-+-------------------+-------------------+---------------------------------+
-```
-
-### Hardware Cursor Synchronization
-
-The hardware cursor position is synchronized with the software raster cursor `(x, y)` by writing directly to CRT Controller registers over I/O ports `0x3D4` and `0x3D5`:
-
-```c
-void vga_update_cursor(int x, int y) {
-    uint16_t pos = (uint16_t)(y * VGA_WIDTH + x);
-    outb(0x3D4, 0x0F);
-    outb(0x3D5, (uint8_t)(pos & 0xFF));
-    outb(0x3D4, 0x0E);
-    outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
-}
-```
-
-### Debian Boot Telemetry Specification
-
-Upon cold boot, dismasmOS mirrors standard Debian/Linux kernel initialization output followed by systemd target unit reports.
-
-```text
-[    0.000000] Linux version 1.0.0-dismasmOS (i686-pc-none) #1 PREEMPT
-[    0.000004] BIOS-provided physical RAM map:
-[    0.000008]   BIOS-e820: [mem 0x0000000000000000-0x000000000009ffff] usable
-[    0.000012]   BIOS-e820: [mem 0x0000000000100000-0x0000000003ffffff] usable
-[    0.000018] CPU: Intel/AMD x86 32-Bit Processor (Protected Mode)
-[    0.000025] console [vga0] enabled, 80x25 text mode at 0xB8000
-[    0.000032] GDT: Global Descriptor Table installed (CS=0x08, DS=0x10)
-[    0.000040] IDT: Interrupt Descriptor Table loaded (256 gates registered)
-[    0.000048] i8259A: Master/Slave PIC remapped to vectors 0x20-0x2F
-[    0.000055] i8042: PS/2 keyboard controller ready, IRQ1 unmasked
-[    0.000062] input: German QWERTZ keymap and AltGr mapping active
-[    0.000070] system: CPU hardware interrupts enabled (EFLAGS.IF=1)
-[    0.000085] vfs: In-memory filesystem mounted at / (type ramfs)
-[  OK  ] Mounted In-Memory Root Filesystem.
-[  OK  ] Reached target System Initialization.
-[  OK  ] Started German Keyboard Layout Mapping Service.
-[  OK  ] Started Console Terminal Driver.
-[  OK  ] Reached target Multi-User System.
-[  OK  ] Started dismasmOS Command Line Shell.
-
-dismasmOS>>> _
-```
-
-Unlike simplistic toy kernels that clear the screen prior to the shell prompt, dismasmOS preserves the kernel ring-buffer boot log in the active text buffer, positioning the initial `dismasmOS>>> ` prompt seamlessly at the line immediately following the final target unit.
-
----
-
-## 7. In-Memory Virtual File System (RAMFS)
+## 5. Hierarchical In-Memory Filesystem (RAMFS)
 
 Storage is structured as a contiguous, fixed-allocation in-memory file table designed for static determinism, eliminating dynamic heap fragmentation (`malloc`/`free` overhead).
 
 ### Structure Definition
 
 ```c
-#define FS_MAX_FILES 32
-#define FS_MAX_FILENAME 32
+#define FS_MAX_FILES 64
+#define FS_MAX_PATH 64
 #define FS_MAX_FILESIZE 2048
+#define FS_MAX_CHANGES 64
 
 struct fs_file {
-    char name[FS_MAX_FILENAME];
+    char path[FS_MAX_PATH];
     char data[FS_MAX_FILESIZE];
     size_t size;
+    uint8_t is_dir;
+    uint8_t is_system;
     uint8_t used;
 };
 ```
 
-### Static Pre-Populated Files
+### Directory Hierarchy Specifications
 
-During kernel bootstrapping (`fs_init()`), three canonical files are generated in RAM:
+During kernel bootstrapping (`fs_init()`), the system creates a full directory structure and removes all legacy flat files (`hardware.txt` and `readme.txt` have been completely eliminated):
 
-1. `readme.txt` (107 Bytes): Introductory release notice and system details.
-2. `kernel.sys` (72 Bytes): Machine-parsable system parameters:
-   ```text
-   OS_NAME=dismasmOS
-   VERSION=1.0
-   ARCH=x86_32
-   BOOT=MULTIBOOT1
-   SHELL=BUILTIN
-   ```
-3. `hardware.txt` (86 Bytes): Hardware enumeration summary:
-   ```text
-   CPU=x86 Protected Mode
-   VIDEO=VGA Text 80x25
-   INPUT=PS2 Keyboard IRQ1
-   PIC=8259 Remapped
-   ```
+```text
+/
+├── home/                <- Primary User Workspace (Default Shell CWD, Clean Sandbox)
+├── boot/                <- Protected Bootloader Subsystem
+│   ├── grub.cfg         <- GRUB2 multiboot configuration (Critical System File)
+│   └── boot.s          <- 64-bit bootstrap assembly (Critical System File)
+├── krnl/                <- Protected Kernel Subsystem
+│   ├── kernel.sys       <- Kernel build parameters and paging info (Critical System File)
+│   └── system.map       <- Kernel symbol address mapping table (Critical System File)
+├── shell/               <- Userland Shell Environment
+│   ├── sh.cfg           <- Shell prompt and history configuration
+│   ├── motd             <- Message of the Day banner
+│   └── aliases          <- Custom command aliases (dir=lsf, cls=clear)
+└── etc/                 <- System Configuration
+    ├── os-release       <- Standard OS metadata
+    ├── hostname         <- Machine network hostname ("dismasm-box")
+    └── fstab            <- Filesystem mount table
+```
+
+### Path Resolution & Canonicalization Engine
+
+The kernel provides `fs_resolve_path(const char *cwd, const char *path, char *out_path)`:
+* Handles both **absolute paths** (starting with `/`) and **relative paths** (evaluated against `shell_cwd`).
+* Resolves `.` (current directory) and `..` (parent directory) components iteratively.
+* Clamps root traversal at `/` so that `cd /home/..` resolves cleanly to `/`.
+
+---
+
+## 6. Filesystem Audit & Change Logging Engine (`changes`)
+
+dismasmOS maintains a continuous ring-buffer log of all file operations in kernel memory.
+
+### Change Log Schema
+
+```c
+struct fs_change {
+    char type[10];     /* VIEW, EDITED, DELETED, CREATED */
+    char user[16];     /* Default: root */
+    char filename[FS_MAX_PATH];
+};
+```
+
+### Operation Logging Triggers
+
+| Operation Type | Action Verb | Triggering System Events | Output Format |
+| :--- | :--- | :--- | :--- |
+| `VIEW` | Viewed | File opened in `em`, file displayed via `cat`, search via `grep` | `[VIEW]-[root] - Viewed <path>` |
+| `EDITED` | Edited | File saved in `em` (`;wsc` or `;s`), file overwritten via `echo > file` | `[EDITED]-[root] - Edited <path>` |
+| `CREATED` | Created | File created via `touch`, directory created via `makedir`, new file via `echo > file` | `[CREATED]-[root] - Created <path>` |
+| `DELETED` | Deleted | File removed via `rm <path>` | `[DELETED]-[root] - Deleted <path>` |
+
+The audit log is displayed in real-time by executing the **`changes`** shell command.
+
+---
+
+## 7. Text Editor "em" Deep Specification
+
+**em** is a full-screen, high-performance in-memory text editor operating at rows 0 through 24 of the VGA display.
+
+```text
+Row  0 - 22: Document Editing Area (with real-time dictionary typo highlighting)
+Row 23     : Status Bar: [EDIT:BASH] /home/main.sh | 1:1 | 98 B | Alt: cmd (;wsc ;q ;s ;-m)
+Row 24     : Interactive Command / Message Bar (Prompts ';' when Alt is pressed)
+```
+
+### Operational Modes
+
+1. **Direct Writing Mode (`MODE_EDIT`)**:
+   * The editor opens directly in typing mode. Characters, numbers, spaces, umlauts, and semicolons (`;`) are inserted directly into the document buffer at `cursor_pos`.
+   * No `i` or `a` key is required to begin typing.
+2. **Command Mode (`MODE_COMMAND`)**:
+   * Triggered exclusively by pressing the **`Alt`** key.
+   * Row 24 displays the cyan `;` prompt.
+   * Typing commands:
+     * `;wsc` (or `wsc`): Write, Save, and Close (saves changes to RAMFS, logs `[EDITED]`, and returns to shell).
+     * `;s` (or `s`): Save document to RAMFS without closing.
+     * `;q` (or `q`): Quit without saving (exits to shell).
+     * `;-m` (or `-m`): Hop cursor to the next detected typographical error.
+   * Pressing `Alt` again or `Esc` immediately cancels command mode and returns to direct editing.
+
+### Multi-Grammar Syntax & Typo Checking Engine (Bash, Python, Markdown)
+
+**em** integrates an intelligent, multi-language real-time spellchecking and keyword validation engine tailored specifically for system administrators and developers:
+
+1. **Automatic Grammar & File-Type Detection**:
+   The editor analyzes the filename extension and buffer shebang on load:
+   * **Bash (`[EDIT:BASH]`)**: Triggered by `.sh`, `.bash`, `sh.cfg`, `aliases`, `motd`, or `#!/bin/bash`, `#!/bin/sh`.
+   * **Python (`[EDIT:PYTHON]`)**: Triggered by `.py`, `.pyw`, or `#!/usr/bin/python`.
+   * **Markdown (`[EDIT:MARKDOWN]`)**: Triggered by `.md`, `.markdown`, `README`, `CHANGES`.
+   * **Generic (`[EDIT]`)**: Standard fallback cross-matching all dictionaries.
+
+2. **Grammar Dictionaries**:
+   * **Bash Dictionary (`dict_bash`)**:
+     * Builtins & Keywords: `if`, `then`, `else`, `elif`, `fi`, `case`, `esac`, `for`, `while`, `until`, `do`, `done`, `echo`, `printf`, `read`, `export`, `alias`, `source`, `exec`, `trap`, `eval`, `declare`, `local`, `shopt`, etc.
+     * Coreutils & CLI: `cat`, `grep`, `sed`, `awk`, `find`, `xargs`, `chmod`, `chown`, `mkdir`, `cp`, `mv`, `rm`, `touch`, `lsf`, `ps`, `top`, `curl`, `wget`, `tar`, `gzip`, `sudo`, `systemctl`, `shutdown`, `reboot`, etc.
+     * Scripting terms: `stdin`, `stdout`, `stderr`, `null`, `pipe`, `stream`, `status`, `args`, `path`, `home`, etc.
+   * **Python Dictionary (`dict_python`)**:
+     * Keywords: `def`, `class`, `import`, `from`, `return`, `yield`, `lambda`, `try`, `except`, `finally`, `raise`, `async`, `await`, `assert`, `pass`, `with`, `while`, `for`, `in`, `is`, `not`, `and`, `or`, etc.
+     * Built-in functions & types: `print`, `len`, `range`, `str`, `int`, `float`, `list`, `dict`, `set`, `tuple`, `bool`, `bytes`, `open`, `read`, `write`, `append`, `extend`, `pop`, `keys`, `values`, `items`, `enumerate`, `zip`, `map`, `filter`, `sorted`, `isinstance`, `super`, `self`, `cls`, `init`, `repr`, etc.
+     * Exceptions & standard libraries: `valueerror`, `typeerror`, `indexerror`, `keyerror`, `ioerror`, `oserror`, `sys`, `os`, `math`, `re`, `json`, `time`, `datetime`, `random`, `subprocess`, `argparse`, `logging`, etc.
+   * **Markdown Dictionary (`dict_markdown`)**:
+     * Document structure: `heading`, `header`, `title`, `summary`, `abstract`, `overview`, `architecture`, `specification`, `implementation`, `manual`, `reference`, `guide`, `changelog`, `features`, `usage`, `installation`, `requirements`, `prerequisites`, `setup`, `configuration`, `build`, `compile`, `running`, `test`, `tests`, `benchmark`, `license`, `author`, `version`, `release`, `notes`, `description`, `details`, etc.
+     * Markdown elements: `example`, `sample`, `code`, `syntax`, `table`, `list`, `link`, `image`, `badge`, `quote`, `blockquote`, `block`, `codeblock`, `inline`, `bold`, `italic`, `strikethrough`, `section`, `bullet`, `todo`, `warning`, `note`, `tip`, `important`, `caution`, `parameter`, `argument`, `status`, `terminal`, `console`, `commit`, `push`, `pull`, `branch`, `repo`, `github`, `git`, `doc`, `docs`, `api`, `cli`, `sdk`, etc.
+
+3. **Visual Highlighting & Hopping**:
+   * Recognized keywords and vocabulary are rendered in clean `VGA_COLOR_WHITE`.
+   * Unrecognized tokens and typos are highlighted in real-time in **`VGA_COLOR_LIGHT_RED`**.
+   * In Command Mode (`Alt`), typing **`;-m`** (or `-m`) automatically hops the cursor sequentially to the next detected typographical error or misspelled keyword, wrapping around the document.
+
+### Cursor & Document Navigation
+
+* **`KEY_UP` / `KEY_DOWN`**: Moves cursor vertically between lines, preserving horizontal column offset or clamping to the destination line boundary.
+* **`KEY_LEFT` / `KEY_RIGHT`**: Decrements or increments `cursor_pos` within the active buffer.
+* **`KEY_HOME` / `KEY_END`**: Jumps cursor to the line's start or end.
+* **`KEY_DELETE`**: Deletes the character directly under the cursor.
+* **`Backspace`**: Deletes the character immediately preceding the cursor.
+
+### Critical System File Protection Modal
+
+When attempting to open a file marked as a critical system asset (any file located within `/boot` or `/krnl`), `em` intercepts execution and presents a warning dialog:
+
+```text
++------------------------------------------------------------------+
+|                    *** SYSTEM WARNING ***                        |
+|                                                                  |
+|  WARNING: CRITICAL SYSTEM FILE!                                  |
+|  File: /boot/grub.cfg                                            |
+|                                                                  |
+|  You are attempting to open a vital system file.                 |
+|  Modifying this file may cause severe system instability,        |
+|  kernel panics, or prevent dismasmOS from booting!               |
+|  Please think twice and ensure you understand the risks.         |
+|  Are you sure you want to proceed?                               |
+|                                                                  |
+|               [   OK   ]               [  EXIT  ]                |
++------------------------------------------------------------------+
+```
+
+* **Interactive Controls**: Navigable via the `Left` and `Right` arrow keys (as well as `Tab`, `Up`, and `Down`). The active button is visually highlighted in green (`[ OK ]`) or red (`[ EXIT ]`).
+* **Confirmation**:
+  * Selecting `[ OK ]` and pressing `Enter` bypasses the warning, logs `[VIEW]`, and opens the editor.
+  * Selecting `[ EXIT ]` or pressing `Escape` aborts the operation and returns to the shell without modifying the screen or opening the file.
 
 ---
 
 ## 8. Shell Architecture & Command Reference
 
-The command-line interface operates via an in-place tokenizing Read-Eval-Print Loop (REPL). User input is buffered into a 128-byte array, scanned for whitespace delimiters (`0x20` and `0x09`), and partitioned into a vector of argument pointers (`argv`) without allocating dynamic memory.
+The command-line interface operates via an in-place tokenizing Read-Eval-Print Loop (REPL). The working directory (`shell_cwd`) defaults to `/home` upon cold boot.
 
-The system incorporates 11 native utilities:
+**Important**: The legacy `ls` command has been completely removed from the system. All file listing operations are handled exclusively by **`lsf`**.
 
 ```text
 +----------+--------------------------------------+------------------------------------+
@@ -446,53 +416,59 @@ The system incorporates 11 native utilities:
 +----------+--------------------------------------+------------------------------------+
 | help     | help                                 | Outputs built-in utility summary   |
 | clear    | clear                                | Resets VGA buffer (blanks 80x25)   |
-| echo     | echo [args...]                       | Echoes string vector to display    |
-| ls       | ls                                   | Lists VFS entries and byte sizes   |
+| echo     | echo [args...]                       | Echoes string vector or redirects  |
+| lsf      | lsf [-s] [-p] [dir]                  | Lists files, sizes (KiB+hex), perms|
+| cd       | cd <directory>                       | Changes working directory (/home)  |
+| makedir  | makedir <directory>                  | Creates a new directory            |
+| changes  | changes                              | Shows audit history log            |
+| em       | em <filename>                        | Full text editor with Alt command  |
 | cat      | cat <filename>                       | Streams full payload of a file     |
 | grep     | grep <pattern> <filename>            | Substring line filter on file data |
 | touch    | touch <filename>                     | Creates an empty node in RAMFS     |
+| rm       | rm <filename>                        | Deletes file / node from RAMFS     |
+| pr       | pr [start|kill|-c|status]            | Process management subsystem       |
 | uname    | uname                                | Prints kernel release & metadata   |
 | MemRep   | MemRep                               | Full memory allocation report      |
 | lang     | lang <de|en>                         | Switches layout (QWERTZ / QWERTY)  |
+| shutdown | shutdown                             | ACPI + Assembly hardware halt      |
 | reboot   | reboot                               | Pulses 8042 CPU reset line (0xFE)  |
 +----------+--------------------------------------+------------------------------------+
 ```
 
-### Command Execution Details
+### Detailed Command Specifications
 
-#### `MemRep` Memory Allocation Report
-Computes and formats a real-time memory map by reading the exported linker segment boundaries (`_kernel_start`, `_text_end`, `_rodata_end`, `_data_end`, `_kernel_end`), hardware MMIO regions, and querying active RAMFS buffer occupancy dynamically.
+#### `lsf` (List Files)
+* **`lsf`**: Clean listing of files and directories in the target path (directories rendered in cyan with trailing `/`).
+* **`lsf -s`**: Displays file sizes in both human-readable KiB/Bytes and 32-bit hexadecimal notation (`0x0000004E`).
+* **`lsf -p`**: Displays permission strings (`drwxr-xr-x`, `-rwxr-xr-x`, `-rw-r--r--`) and user permissions (`[root:admin rwx]`).
+* **Flags can be combined**: `lsf -sp`, `lsf -s -p`, `lsf -ps`.
 
-#### `lang` Runtime Layout Switcher
-Toggles the active PS/2 key translation state matrix between German DIN 2137-2 (QWERTZ with AltGr and CP437 umlauts) and US Standard (QWERTY), immediately altering keycode routing without requiring a kernel reboot.
+#### `cd` (Change Directory)
+* `cd`: Jumps to default workspace `/home`.
+* `cd ~`: Jumps to default workspace `/home`.
+* `cd /`: Jumps to root filesystem `/`.
+* `cd ..`: Moves to parent directory.
+* `cd <rel_path>`: Resolves relative path against current `shell_cwd`.
 
-#### `cat` File Streaming
-Executes a linear lookup in the file table matching `argv[1]`. If located, it emits characters directly to the VGA console driver until `file->size` is reached.
+#### `makedir` (Make Directory)
+* Creates a directory node in the filesystem table.
+* Automatically records a `[CREATED]` event in the `changes` audit log.
 
-#### `grep` In-Memory Pattern Search
-Iterates sequentially over the specified target file payload. Lines bounded by `\n` or `\0` are isolated into a temporary buffer and evaluated using a freestanding implementation of `strstr`. Only lines satisfying `strstr(line, pattern) != NULL` are written to the display.
-
-#### `reboot` Hardware Reset Vector
-Performs an immediate cold hardware restart by communicating with the Intel 8042 Keyboard Microcontroller:
-
-```c
-static void sys_reboot(void) {
-    uint8_t temp;
-    __asm__ volatile("cli");
-    do {
-        temp = inb(0x64);
-        if (temp & 1) {
-            inb(0x60);
-        }
-    } while (temp & 2);
-    outb(0x64, 0xFE);
-    while (1) {
-        __asm__ volatile("hlt");
-    }
-}
-```
-
-Writing `0xFE` to command port `0x64` forces the controller to pulse the processor's active-low `#RESET` pin, instantly initiating a clean hardware reboot cycle.
+#### `shutdown` (System Poweroff & Assembly Halt)
+* Performs an active, safe system shutdown:
+  1. Flushes in-memory filesystem buffers.
+  2. Disables interrupts via `cli`.
+  3. Sends power-off signals to standard virtual machine ACPI ports:
+     * Port `0x604` (QEMU ACPI poweroff: `outw(0x604, 0x2000)`)
+     * Port `0xB004` (Bochs ACPI poweroff: `outw(0xB004, 0x2000)`)
+     * Port `0x4004` (VirtualBox ACPI poweroff: `outw(0x4004, 0x3400)`)
+     * Port `0xF4` (QEMU debug exit: `outb(0xF4, 0x00)`)
+  4. Enters an infinite processor halt loop:
+     ```asm
+     cli
+     1: hlt
+     jmp 1b
+     ```
 
 ---
 
@@ -500,36 +476,43 @@ Writing `0xFE` to command port `0x64` forces the controller to pulse the process
 
 ```text
 dismasmOS/
-├── build.sh                 # Fully automated Bash build and ISO generation harness
-├── Makefile                 # Deterministic GNU Makefile with freestanding compiler flags
+├── build.sh                 # Fully automated build and ISO generation harness
+├── Makefile                 # GNU Makefile with freestanding x86_64 compiler flags
 ├── linker.ld                # GNU LD script defining 1 MiB VMA/LMA layout
-├── grub.cfg                 # GRUB 2 ISO bootloader menu configuration
+├── grub.cfg                 # GRUB 2 ISO multiboot menu configuration
+├── changes.txt              # Plain-text commit and release changelog (no Markdown syntax)
 ├── include/                 # Freestanding Kernel Header Specifications
-│   ├── fs.h                 # RAMFS struct file descriptor declarations
-│   ├── idt.h                # IDT descriptor and gate entry definitions
-│   ├── io.h                 # Inline x86 assembly port I/O primitives (inb, outb)
-│   ├── kbd.h                # Keyboard driver interfaces and circular queue
+│   ├── em.h                 # "em" editor prototypes and modal dialog interfaces
+│   ├── fs.h                 # RAMFS struct file, path resolver, audit log declarations
+│   ├── idt.h                # 64-Bit IDT descriptor and gate entry definitions
+│   ├── io.h                 # Inline assembly port I/O primitives (inb, outb, outw)
+│   ├── kbd.h                # Keyboard driver interfaces, special keycodes (KEY_UP, etc.)
 │   ├── pic.h                # Dual-8259A PIC register definitions and command masks
+│   ├── proc.h               # Process table structures and management interfaces
 │   ├── shell.h              # Command parser, tokenizer, and loop declarations
-│   ├── string.h             # Freestanding C string library function prototypes
-│   ├── types.h              # Fixed-width standard integer typedefs (uint8_t, etc.)
+│   ├── string.h             # Freestanding C string library (strlen, strcmp, strncat, etc.)
+│   ├── types.h              # Standard integer typedefs (uint8_t, size_t, etc.)
 │   └── vga.h                # VGA text mode colors, macros, and function prototypes
 └── src/                     # Core Implementation Sources
     ├── boot/
-    │   └── boot.s           # Multiboot 1 entry, GDT definition, stack, and far jump
+    │   └── boot.s           # Multiboot 1 entry, 4-level paging setup, 64-bit transition
     ├── arch/
-    │   ├── idt_asm.s        # Low-level assembly ISR dispatch stubs and lidt wrapper
-    │   ├── idt.c            # IDT gate population and initialization logic
-    │   ├── kbd.c            # DIN 2137-2 QWERTZ driver, AltGr decoder, scancode table
-    │   └── pic.c            # 8259A PIC initialization, remapping, and EOI signaling
+    │   ├── idt_asm.s        # 64-Bit assembly ISR dispatch stubs and lidt wrapper
+    │   ├── idt.c            # 256-entry 64-bit IDT gate population and setup
+    │   ├── kbd.c            # DIN 2137-2 QWERTZ driver, AltGr decoder, designated init
+    │   └── pic.c            # Dual-8259A PIC initialization, remapping, and EOI signaling
     ├── drivers/
     │   └── vga.c            # 0xB8000 VRAM driver, scrolling, and CRT cursor sync
+    ├── em/
+    │   └── em.c             # Full "em" text editor, Alt-command engine, warning dialog
     ├── fs/
-    │   └── fs.c             # RAMFS linear directory storage and default file payloads
+    │   └── fs.c             # Hierarchical RAMFS, path canonicalization, changes audit log
     ├── lib/
-    │   └── string.c         # Zero-dependency implementations of strlen, strcmp, etc.
+    │   └── string.c         # Freestanding implementations of strlen, strcmp, strncat, etc.
+    ├── proc/
+    │   └── proc.c           # Process control block, process table, service.prf agent
     ├── shell/
-    │   └── shell.c          # Tokenizer, REPL loop, prompt styling, command implementations
+    │   └── shell.c          # Tokenizer, REPL loop, prompt styling, lsf, cd, shutdown
     └── kernel.c             # Hardware bootstrap sequence, Debian boot telemetry banner
 ```
 
@@ -539,92 +522,83 @@ dismasmOS/
 
 ### Toolchain Prerequisites
 
-To assemble, compile, link, and package dismasmOS, the host environment requires:
+To build dismasmOS, the host environment requires:
+* **GNU Compiler Collection (`gcc`)** with 64-bit freestanding support.
+* **GNU Assembler (`as`)** and **GNU Linker (`ld`)** supporting target `elf_x86_64`.
+* **GNU Make (`make`)**.
+* **GRUB 2 (`grub-mkrescue`)** and **xorriso** for bootable ISO creation.
+* **QEMU (`qemu-system-x86_64`)** for local emulation.
 
-- **GNU Compiler Collection (`gcc`)** with 32-bit compilation support (`multilib` / `-m32`).
-- **GNU Assembler (`as`)** and **GNU Linker (`ld`)** supporting target `elf_i386`.
-- **GNU Make (`make`)**.
-- **GRUB 2 (`grub-mkrescue`)** and **xorriso** for bootable El Torito ISO creation.
-- **QEMU (`qemu-system-i386`)** for local emulation and testing.
-
-On Debian, Ubuntu, or WSL:
-
-```bash
-sudo apt-get update
-sudo apt-get install build-essential gcc-multilib grub-pc-bin grub-common xorriso qemu-system-x86
-```
-
-### Build Execution
-
-Run the provided build script:
+### Build Commands
 
 ```bash
-chmod +x build.sh
-./build.sh
-```
-
-The script performs full target dependency verification, cleans object files, compiles all C and assembly units with optimization flags `-O2`, links the final executable `dismasmOS.bin`, builds the GRUB directory tree, and invokes `xorriso` to output `dismasmOS.iso`.
-
-To compile manually via the Makefile:
-
-```bash
-# Clean intermediate object files
+# Clean intermediate object files and build artifacts
 make clean
 
-# Compile and link the 19 KiB ELF binary
+# Compile and link the 64-bit ELF binary (dismasmOS.bin)
 make
 
-# Build bootable ISO image
+# Build bootable hybrid El Torito ISO image (dismasmOS.iso)
 make iso
 ```
 
 ---
 
-## 11. Emulation and Hardware Deployment
+## 11. Emulation and Testing
 
 ### Running under QEMU
 
-Execute directly from the compiled ELF kernel binary:
+Execute directly using the compiled ELF kernel binary:
 
 ```bash
-qemu-system-i386 -kernel dismasmOS.bin
+qemu-system-x86_64 -kernel dismasmOS.bin
 ```
 
-Or emulate the complete CD-ROM boot sequence using the generated ISO image:
+Or boot the complete CD-ROM ISO image:
 
 ```bash
-qemu-system-i386 -cdrom dismasmOS.iso -m 256M
+qemu-system-x86_64 -cdrom dismasmOS.iso -m 256M
+```
+
+To test the German keyboard layout directly within QEMU:
+
+```bash
+qemu-system-x86_64 -cdrom dismasmOS.iso -m 256M -k de
 ```
 
 ### Running under Oracle VirtualBox
 
 1. Create a new Virtual Machine:
-   - **Name**: `dismasmOS`
-   - **Type**: `Other`
-   - **Version**: `Other/Unknown (32-bit)`
-   - **RAM**: `64 MB` or `128 MB`
-2. In **Storage Settings**, attach `dismasmOS.iso` to the Optical Drive.
-3. Boot the Virtual Machine. The system will initialize via GRUB, load the custom GDT, render the Debian-style telemetry sequence, and present the `dismasmOS>>> ` prompt with the German keyboard layout fully active.
+   * **Type**: `Other`
+   * **Version**: `Other/Unknown (64-bit)`
+   * **RAM**: `128 MB`
+2. Under **Storage**, attach `dismasmOS.iso` to the IDE/SATA Optical Drive.
+3. Start the VM. GRUB 2 will load the kernel, establish 64-bit Long Mode, and drop directly into `/home` at the shell prompt.
 
 ---
 
 ## 12. Technical Specifications Reference Sheet
 
 ```text
-Processor Architecture:     x86 (IA-32, 32-Bit Protected Mode)
+Processor Architecture:     x86_64 (AMD64 / Intel 64 Long Mode)
 Privilege Level:            Ring 0 (Kernel Supervisor)
-Address Translation:        Flat Physical Addressing (Paging Disabled)
-Binary Format:              ELF 32-bit LSB Executable (i386)
+Address Translation:        4-Level Paging (PML4, PDPT, PD, 1 GiB Identity Mapped)
+Page Size:                  2 MiB Huge Pages (0x83 Flag)
+Binary Format:              ELF 64-bit LSB Executable (x86-64)
 Boot Specification:         Multiboot 1 (RFC 0.6.96)
 Entry Point Physical Addr:  0x00100000 (1 MiB Alignment)
 Interrupt Architecture:     Dual-8259A Cascaded PIC (Vectors 0x20-0x2F)
+Interrupt Descriptor Gate:  64-Bit Gate Descriptors (16 Bytes / Descriptor)
 Console Video Mode:         VGA Color Text Mode 80x25 @ 0x000B8000
 Console Hardware Ports:     0x3D4 (Index), 0x3D5 (Data) - CRT Controller
-Keyboard Controller:        Intel 8042 PS/2 Microcontroller
-Keyboard Protocol:          Scancode Set 1 Translation
-Active Layout:              German DIN 2137-2 (QWERTZ) with AltGr Extensions
-Default Code Page:          IBM Code Page 437 (CP437)
-Filesystem Engine:          Contiguous Flat Static In-Memory RAMFS
-Power Management:           Low-Power Idle C1 State via Processor HLT
-External Dependencies:      0 (Fully freestanding, no external C library)
+System Config Variables:    SYSTEM_VERSION & SYSTEM_BUILD defined at top of src/shell/shell.c
+Keyboard Controller:        Intel 8042 PS/2 Microcontroller (IRQ1)
+Keyboard Driver Mapping:    German DIN 2137-2 (QWERTZ) & US (QWERTY)
+Hardware Navigation:        Full Arrow Keys, Home, End, Delete, Alt-Command Trigger
+Text Editor:                "em" with Spellchecking, Modal Alt-Commands, Warning Dialog
+Filesystem Engine:          Hierarchical RAMFS (/home, /boot, /krnl, /shell, /etc)
+Default Working Directory:  /home
+Filesystem Audit Log:       Kernel-level Ring-Buffer Log (VIEW, EDITED, CREATED, DELETED)
+Power Management:           ACPI VM Poweroff (0x604, 0xB004, 0x4004) + Assembly HLT Loop
+External Dependencies:      0 (Fully freestanding, zero external C library linkage)
 ```
