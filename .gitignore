@@ -8,7 +8,10 @@
 *.elf
 
 isodir/
-
+.vs
+.git
+changes.txt
+changes.md
 .vscode/
 .idea/
 *.swp
