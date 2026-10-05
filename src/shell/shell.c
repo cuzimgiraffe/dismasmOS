@@ -1,5 +1,5 @@
-const char *SYSTEM_VERSION = "1.2";
-const char *SYSTEM_BUILD   = "VF001.02.0.2026";
+const char *SYSTEM_VERSION = "1.4";
+const char *SYSTEM_BUILD   = "VF001.04.0.2026";
 
 #include "shell.h"
 #include "vga.h"
