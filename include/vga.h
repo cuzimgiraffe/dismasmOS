@@ -30,10 +30,15 @@ enum vga_color {
 void vga_init(void);
 void vga_clear(void);
 void vga_set_color(uint8_t fg, uint8_t bg);
+uint8_t vga_get_current_color(void);
 void vga_putchar(char c);
 void vga_puts(const char *str);
 void vga_write(const char *data, size_t size);
 void vga_backspace(void);
 void vga_update_cursor(int x, int y);
+void vga_print_1bit_spot(uint8_t color);
+int vga_parse_color(const char *str);
+const char *vga_get_color_name(uint8_t color);
 
 #endif
+

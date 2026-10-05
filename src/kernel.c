@@ -7,6 +7,8 @@
 #include "fs.h"
 #include "proc.h"
 #include "shell.h"
+#include "heap.h"
+
 
 static void boot_delay(uint32_t count) {
     for (volatile uint32_t i = 0; i < count; i++) {
@@ -62,6 +64,9 @@ void kmain(void) {
     __asm__ volatile("sti");
     log_kmsg("    0.000070", "system: CPU hardware interrupts enabled (RFLAGS.IF=1)");
 
+    heap_init();
+    log_kmsg("    0.000078", "mm: Kernel heap allocator initialized (16 MiB dynamic memory)");
+
     fs_init();
     log_kmsg("    0.000085", "vfs: In-memory filesystem mounted at / (type ramfs)");
 
@@ -69,7 +74,9 @@ void kmain(void) {
     log_kmsg("    0.000095", "proc: Process management active, agent service.prf loaded");
 
     log_ok("Mounted In-Memory Root Filesystem.");
+    log_ok("Initialized Kernel Heap Allocator (malloc/free).");
     log_ok("Started Process Subsystem (service.prf).");
+
     log_ok("Started German Keyboard Layout Mapping Service.");
     log_ok("Started Console Terminal Driver.");
     log_ok("Reached target 64-Bit System Initialization.");
