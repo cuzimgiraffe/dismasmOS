@@ -88,7 +88,7 @@ dismasmOS initializes from a Multiboot 1 compliant bootloader (such as GRUB 2) a
 ### Centralized System Version & Configuration
 
 System identity and build metadata are centralized in dedicated global descriptors:
-* System Version: "1.2"
+* System Version: "1.4"
 * System Build: "2026"
 
 These values are consumed uniformly across kernel boot telemetry banners, shell prompts, diagnostic reports, and shutdown status screens.
