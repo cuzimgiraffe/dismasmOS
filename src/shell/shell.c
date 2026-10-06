@@ -10,6 +10,9 @@ const char *SYSTEM_BUILD   = "VF001.04.0.2026";
 #include "proc.h"
 #include "em.h"
 #include "heap.h"
+#include "wdid.h"
+#include "fs_ata.h"
+#include "pr_mon.h"
 
 
 #define CMD_MAX_LEN 128
@@ -760,8 +763,9 @@ static int cmd_heap(int argc, char **argv) {
 
 static void cmd_help(void) {
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    vga_puts("dismasmOS 1.2 Available Commands (23):\n");
+    vga_puts("dismasmOS 1.4 Available Commands (24):\n");
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_puts("  wdid      - manual reader like linux man (wdid <cmd>, scroll: wheel/pgup/pgdn)\n");
     vga_puts("  help      - display available commands\n");
     vga_puts("  clear     - clear console screen\n");
     vga_puts("  colr      - display 16-color 1-bit spot for color (colr (farbe))\n");
@@ -780,7 +784,10 @@ static void cmd_help(void) {
     vga_puts("  touch     - create empty file\n");
     vga_puts("  rm        - remove file or directory\n");
     vga_puts("  grep      - search pattern in file\n");
-    vga_puts("  pr        - process management (start, kill, -c, status)\n");
+    vga_puts("  pr        - live hardware monitor (ESC/q to exit) or process control\n");
+    vga_puts("  toc       - list files in ATA LBA28 Table of Contents (ToC Sektor 0)\n");
+    vga_puts("  atasave   - save data to ATA disk extent via ToC (rep outsw)\n");
+    vga_puts("  ataload   - load data from ATA disk extent via ToC (rep insw)\n");
     vga_puts("  uname     - system information\n");
     vga_puts("  MemRep    - memory allocation report\n");
     vga_puts("  lang      - switch keyboard layout (de / en)\n");
@@ -1020,9 +1027,65 @@ static void cmd_uname(void) {
     vga_puts("dismasmOS 1.2 (x86_64 Long Mode 64-Bit)\nCreation of the Saviour\nMay God lead this Creation\n");
 }
 
-static void cmd_pr(int argc, char **argv) {
+static void cmd_atasave(int argc, char **argv) {
+    if (argc < 3) {
+        vga_puts("usage: atasave <8_char_name> <content>\n");
+        return;
+    }
+    char name8[8];
+    memset(name8, ' ', 8);
+    size_t nlen = strlen(argv[1]);
+    if (nlen > 8) nlen = 8;
+    memcpy(name8, argv[1], nlen);
+
+    size_t dlen = strlen(argv[2]);
+    int res = fs_ata_save_file(name8, argv[2], (uint32_t)dlen);
+    if (res == 0) {
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        vga_puts("OK: Datei erfolgreich in ATA-Blockextent geschrieben!\n");
+    } else {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("Fehler beim Schreiben auf ATA-Sektoren!\n");
+    }
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+static void cmd_ataload(int argc, char **argv) {
     if (argc < 2) {
-        proc_status_all();
+        vga_puts("usage: ataload <8_char_name>\n");
+        return;
+    }
+    char name8[8];
+    memset(name8, ' ', 8);
+    size_t nlen = strlen(argv[1]);
+    if (nlen > 8) nlen = 8;
+    memcpy(name8, argv[1], nlen);
+
+    static char load_buf[4096];
+    memset(load_buf, 0, sizeof(load_buf));
+    int bytes = fs_ata_load_file(name8, load_buf);
+    if (bytes >= 0) {
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        vga_puts("OK: Datei von ATA-Disk geladen (");
+        char nbuf[16];
+        itoa(bytes, nbuf);
+        vga_puts(nbuf);
+        vga_puts(" Bytes):\n");
+        vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        load_buf[bytes < 4095 ? bytes : 4095] = '\0';
+        vga_puts(load_buf);
+        vga_putchar('\n');
+    } else {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("Fehler: Datei nicht in ToC gefunden oder ATA I/O-Fehler!\n");
+    }
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+static void cmd_pr(int argc, char **argv) {
+    /* Wenn 'pr' ohne Argumente oder mit 'live'/'mon' aufgerufen wird: Dynamischer Live-Monitor! */
+    if (argc < 2 || strcmp(argv[1], "live") == 0 || strcmp(argv[1], "mon") == 0) {
+        pr_monitor_loop();
         return;
     }
 
@@ -1098,7 +1161,9 @@ static int execute_command(int argc, char **argv) {
     if (argc == 0) {
         return 0;
     }
-    if (strcmp(argv[0], "help") == 0) {
+    if (strcmp(argv[0], "wdid") == 0 || strcmp(argv[0], "man") == 0) {
+        return cmd_wdid(argc, argv);
+    } else if (strcmp(argv[0], "help") == 0) {
         cmd_help();
         return 0;
     } else if (strcmp(argv[0], "clear") == 0) {
@@ -1147,6 +1212,15 @@ static int execute_command(int argc, char **argv) {
         return 0;
     } else if (strcmp(argv[0], "pr") == 0) {
         cmd_pr(argc, argv);
+        return 0;
+    } else if (strcmp(argv[0], "toc") == 0 || strcmp(argv[0], "atals") == 0) {
+        fs_ata_list_toc();
+        return 0;
+    } else if (strcmp(argv[0], "atasave") == 0) {
+        cmd_atasave(argc, argv);
+        return 0;
+    } else if (strcmp(argv[0], "ataload") == 0) {
+        cmd_ataload(argc, argv);
         return 0;
     } else if (strcmp(argv[0], "em") == 0) {
         cmd_em(argc, argv);

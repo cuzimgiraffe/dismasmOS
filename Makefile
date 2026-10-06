@@ -6,10 +6,14 @@ CFLAGS = -m64 -ffreestanding -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mn
 ASFLAGS = --64
 LDFLAGS = -m elf_x86_64 -T linker.ld -nostdlib
 
+NASM = nasm
+NASMFLAGS = -f elf64
+
 SRC_C = $(wildcard src/*.c) $(wildcard src/**/*.c)
 SRC_S = $(wildcard src/**/*.s)
+SRC_ASM = $(wildcard src/**/*.asm)
 
-OBJ = src/boot/boot.o src/arch/idt_asm.o $(filter-out src/boot/boot.o src/arch/idt_asm.o, $(SRC_C:.c=.o))
+OBJ = src/boot/boot.o src/arch/idt_asm.o $(SRC_ASM:.asm=.o) $(filter-out src/boot/boot.o src/arch/idt_asm.o, $(SRC_C:.c=.o))
 
 BIN = dismasmOS.bin
 ISO = dismasmOS.iso
@@ -24,6 +28,9 @@ $(BIN): $(OBJ)
 
 %.o: %.s
 	$(AS) $(ASFLAGS) $< -o $@
+
+%.o: %.asm
+	$(NASM) $(NASMFLAGS) $< -o $@
 
 iso: $(BIN)
 	mkdir -p isodir/boot/grub
