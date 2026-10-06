@@ -10,6 +10,7 @@ const char *SYSTEM_BUILD   = "VF001.04.0.2026";
 #include "proc.h"
 #include "em.h"
 #include "heap.h"
+#include "wdid.h"
 
 
 #define CMD_MAX_LEN 128
@@ -760,8 +761,9 @@ static int cmd_heap(int argc, char **argv) {
 
 static void cmd_help(void) {
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    vga_puts("dismasmOS 1.2 Available Commands (23):\n");
+    vga_puts("dismasmOS 1.4 Available Commands (24):\n");
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_puts("  wdid      - manual reader like linux man (wdid <cmd>, scroll: wheel/pgup/pgdn)\n");
     vga_puts("  help      - display available commands\n");
     vga_puts("  clear     - clear console screen\n");
     vga_puts("  colr      - display 16-color 1-bit spot for color (colr (farbe))\n");
@@ -1098,7 +1100,9 @@ static int execute_command(int argc, char **argv) {
     if (argc == 0) {
         return 0;
     }
-    if (strcmp(argv[0], "help") == 0) {
+    if (strcmp(argv[0], "wdid") == 0 || strcmp(argv[0], "man") == 0) {
+        return cmd_wdid(argc, argv);
+    } else if (strcmp(argv[0], "help") == 0) {
         cmd_help();
         return 0;
     } else if (strcmp(argv[0], "clear") == 0) {

@@ -18,10 +18,13 @@
 #define KEY_INSERT   0x8009
 #define KEY_DELETE   0x800A
 #define KEY_ALT      0x800B
+#define KEY_SCROLL_UP   0x800C
+#define KEY_SCROLL_DOWN 0x800D
 
 void kbd_init(void);
 int kbd_getchar(void);
 void kbd_handler(void);
+void kbd_enqueue_key(int key);
 void kbd_set_layout(int layout);
 int kbd_get_layout(void);
 

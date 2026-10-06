@@ -4,6 +4,7 @@
 #include "idt.h"
 #include "pic.h"
 #include "kbd.h"
+#include "mouse.h"
 #include "fs.h"
 #include "proc.h"
 #include "shell.h"
@@ -61,6 +62,9 @@ void kmain(void) {
     log_kmsg("    0.000055", "i8042: PS/2 keyboard controller ready, IRQ1 unmasked");
     log_kmsg("    0.000062", "input: German QWERTZ keymap and AltGr mapping active");
 
+    mouse_init();
+    log_kmsg("    0.000066", "i8042: PS/2 mouse & IntelliMouse scroll wheel initialized");
+
     __asm__ volatile("sti");
     log_kmsg("    0.000070", "system: CPU hardware interrupts enabled (RFLAGS.IF=1)");
 
@@ -78,6 +82,7 @@ void kmain(void) {
     log_ok("Started Process Subsystem (service.prf).");
 
     log_ok("Started German Keyboard Layout Mapping Service.");
+    log_ok("Started PS/2 Mouse & Scroll Wheel Subsystem.");
     log_ok("Started Console Terminal Driver.");
     log_ok("Reached target 64-Bit System Initialization.");
     log_ok("Started dismasmOS Command Line Shell.");

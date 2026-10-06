@@ -211,6 +211,8 @@ void kbd_handler(void) {
     else if (scancode == 0x4D) c = KEY_RIGHT;
     else if (scancode == 0x47) c = KEY_HOME;
     else if (scancode == 0x4F) c = KEY_END;
+    else if (scancode == 0x49) c = KEY_PGUP;
+    else if (scancode == 0x51) c = KEY_PGDN;
     else if (scancode == 0x53) c = KEY_DELETE;
     else if (current_layout == KBD_LAYOUT_DE) {
         if (altgr_pressed) {
@@ -249,6 +251,14 @@ void kbd_handler(void) {
             kbd_buffer[kbd_head] = c;
             kbd_head = next;
         }
+    }
+}
+
+void kbd_enqueue_key(int key) {
+    size_t next = (kbd_head + 1) % KBD_BUF_SIZE;
+    if (next != kbd_tail) {
+        kbd_buffer[kbd_head] = key;
+        kbd_head = next;
     }
 }
 
