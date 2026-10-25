@@ -3,6 +3,7 @@
 
 extern void idt_load(struct idt_ptr *ptr);
 extern void isr_kbd_entry(void);
+extern void isr_mouse_entry(void);
 extern void isr_default(void);
 
 static struct idt_entry idt[256];
@@ -29,6 +30,7 @@ void idt_init(void) {
     }
 
     idt_set_gate(33, (uint64_t)(uintptr_t)isr_kbd_entry, 0x08, 0x8E);
+    idt_set_gate(44, (uint64_t)(uintptr_t)isr_mouse_entry, 0x08, 0x8E);
 
     idt_load(&idt_p);
 }

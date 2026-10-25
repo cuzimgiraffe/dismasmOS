@@ -4,9 +4,14 @@
 #include "idt.h"
 #include "pic.h"
 #include "kbd.h"
+#include "mouse.h"
 #include "fs.h"
+#include "ata.h"
+#include "ntfs.h"
 #include "proc.h"
 #include "shell.h"
+#include "heap.h"
+
 
 static void boot_delay(uint32_t count) {
     for (volatile uint32_t i = 0; i < count; i++) {
@@ -59,18 +64,34 @@ void kmain(void) {
     log_kmsg("    0.000055", "i8042: PS/2 keyboard controller ready, IRQ1 unmasked");
     log_kmsg("    0.000062", "input: German QWERTZ keymap and AltGr mapping active");
 
+    mouse_init();
+    log_kmsg("    0.000066", "i8042: PS/2 mouse & IntelliMouse scroll wheel initialized");
+
     __asm__ volatile("sti");
     log_kmsg("    0.000070", "system: CPU hardware interrupts enabled (RFLAGS.IF=1)");
 
+    heap_init();
+    log_kmsg("    0.000078", "mm: Kernel heap allocator initialized (16 MiB dynamic memory)");
+
     fs_init();
     log_kmsg("    0.000085", "vfs: In-memory filesystem mounted at / (type ramfs)");
+
+    if (storage_init() == 0) {
+        if (ntfs_automount() == 0) {
+            fs_mount_ntfs();
+            log_ok("Mounted Persistent NTFS Volume at /ntfs (Linux UUID/LABEL bound).");
+        }
+    }
 
     proc_init();
     log_kmsg("    0.000095", "proc: Process management active, agent service.prf loaded");
 
     log_ok("Mounted In-Memory Root Filesystem.");
+    log_ok("Initialized Kernel Heap Allocator (malloc/free).");
     log_ok("Started Process Subsystem (service.prf).");
+
     log_ok("Started German Keyboard Layout Mapping Service.");
+    log_ok("Started PS/2 Mouse & Scroll Wheel Subsystem.");
     log_ok("Started Console Terminal Driver.");
     log_ok("Reached target 64-Bit System Initialization.");
     log_ok("Started dismasmOS Command Line Shell.");

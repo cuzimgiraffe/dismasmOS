@@ -1,3 +1,6 @@
+const char *SYSTEM_VERSION = "1.4";
+const char *SYSTEM_BUILD   = "VF001.04.0.2026";
+
 #include "shell.h"
 #include "vga.h"
 #include "kbd.h"
@@ -6,11 +9,47 @@
 #include "io.h"
 #include "proc.h"
 #include "em.h"
+#include "heap.h"
+#include "wdid.h"
+#include "fs_ata.h"
+#include "ata.h"
+#include "ntfs.h"
+#include "pr_mon.h"
+
 
 #define CMD_MAX_LEN 128
 #define MAX_ARGS 16
 
 extern uint8_t _kernel_start, _text_end, _rodata_end, _data_end, _kernel_end;
+
+static char shell_cwd[FS_MAX_PATH] = "/home";
+
+static void sys_shutdown(void) {
+    vga_clear();
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("dismasmOS ");
+    vga_puts(SYSTEM_VERSION);
+    vga_puts(" is shutting down...\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_puts("Flushing filesystem buffers... [  OK  ]\n");
+    vga_puts("Stopping background agents... [  OK  ]\n");
+    vga_puts("Preparing hardware power-off... [  OK  ]\n\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("System halted. It is now safe to power off your machine.\n");
+
+    outw(0x604, 0x2000);
+    outw(0xB004, 0x2000);
+    outw(0x4004, 0x3400);
+    outb(0xF4, 0x00);
+
+    __asm__ volatile (
+        "cli\n\t"
+        "1:\n\t"
+        "hlt\n\t"
+        "jmp 1b\n\t"
+        : : : "memory"
+    );
+}
 
 static void sys_reboot(void) {
     uint8_t temp;
@@ -135,11 +174,22 @@ static void cmd_memrep(void) {
     print_str_pad("Kernel .bss", 15);
     vga_puts("Zero-Init\n");
 
-    print_hex(k_end);
+    uint64_t heap_s = (uint64_t)heap_get_start_addr();
+    uint64_t heap_e = (uint64_t)heap_get_end_addr();
+
+    print_hex(heap_s);
+    vga_puts("-");
+    print_hex(heap_e);
+    vga_puts("  ");
+    print_num_kib(heap_e - heap_s, 11);
+    print_str_pad("Kernel Heap", 15);
+    vga_puts("Dynamic malloc/free\n");
+
+    print_hex(heap_e);
     vga_puts("-");
     print_hex(0x3FFFFFFF);
     vga_puts("  ");
-    print_num_kib(0x40000000 - k_end, 11);
+    print_num_kib(0x40000000 - heap_e, 11);
     print_str_pad("Identity RAM", 15);
     vga_puts("1 GiB Long Mode\n");
 
@@ -167,13 +217,23 @@ static void cmd_memrep(void) {
     vga_puts(num);
     vga_puts(" active processes)\n");
 
+    vga_puts("Kernel Heap: ");
+    itoa((int)((heap_get_used() + 1023) / 1024), num);
+    vga_puts(num);
+    vga_puts(" KiB / ");
+    itoa((int)(heap_get_total() / 1024), num);
+    vga_puts(num);
+    vga_puts(" KiB (");
+    itoa((int)heap_get_alloc_count(), num);
+    vga_puts(" active allocs)\n");
+
     vga_puts("Kernel Footprint: ");
     uint64_t k_kib = (k_end - k_start + 1023) / 1024;
     itoa((int)k_kib, num);
     vga_puts(num);
     vga_puts(" KiB\n");
 
-    uint64_t total_used_kib = k_kib + proc_total_mem_kib() + ((fs_used_bytes() + 1023) / 1024) + 32;
+    uint64_t total_used_kib = k_kib + proc_total_mem_kib() + ((fs_used_bytes() + 1023) / 1024) + ((heap_get_used() + 1023) / 1024) + 32;
     vga_puts("Total System Used: ");
     itoa((int)total_used_kib, num);
     vga_puts(num);
@@ -199,28 +259,552 @@ static void cmd_lang(int argc, char **argv) {
         kbd_set_layout(KBD_LAYOUT_EN);
         vga_puts("switched to: en\n");
     } else {
-        vga_puts("- unknown -'");
+        vga_puts("- unknown - '");
         vga_puts(argv[1]);
         vga_puts("'. use 'de' or 'en'\n");
     }
 }
 
-static void cmd_help(void) {
-    vga_puts("Available commands (13):\n");
-    vga_puts("  help    - get help\n");
-    vga_puts("  clear   - clearence\n");
-    vga_puts("  echo    - print or redirect into file\n");
-    vga_puts("  ls      - list files\n");
-    vga_puts("  cat     - display file content\n");
-    vga_puts("  grep    - search pattern in file\n");
-    vga_puts("  touch   - empty file creation\n");
-    vga_puts("  em      - vi-style text editor\n");
-    vga_puts("  pr      - process management (start, kill, -c (comment), status)\n");
-    vga_puts("  uname   - get system info\n");
-    vga_puts("  MemRep  - memory allocation report in KiB\n");
-    vga_puts("  lang    - switch keyboard layout\n");
-    vga_puts("  reboot  - reboot machine\n");
+static void sound_error(void) {
+    uint32_t div = 1193180 / 3000;
+    outb(0x43, 0xB6);
+    outb(0x42, (uint8_t)(div & 0xFF));
+    outb(0x42, (uint8_t)((div >> 8) & 0xFF));
+    uint8_t tmp = inb(0x61);
+    if ((tmp & 3) != 3) {
+        outb(0x61, (uint8_t)(tmp | 3));
+    }
+    for (volatile int i = 0; i < 1000; i++) {
+        io_wait();
+    }
+    outb(0x61, (uint8_t)(inb(0x61) & ~3));
 }
+
+static uint64_t parse_num(const char *s) {
+    uint64_t val = 0;
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        s += 2;
+        while (*s) {
+            char c = *s++;
+            val <<= 4;
+            if (c >= '0' && c <= '9') val |= (c - '0');
+            else if (c >= 'a' && c <= 'f') val |= (c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') val |= (c - 'A' + 10);
+            else break;
+        }
+    } else {
+        while (*s >= '0' && *s <= '9') {
+            val = val * 10 + (*s++ - '0');
+        }
+    }
+    return val;
+}
+
+static int cmd_reg(void) {
+    uint64_t rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;
+    uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
+    uint64_t cr0, cr2, cr3, cr4, rflags;
+
+    __asm__ volatile("mov %%rax, %0" : "=r"(rax));
+    __asm__ volatile("mov %%rbx, %0" : "=r"(rbx));
+    __asm__ volatile("mov %%rcx, %0" : "=r"(rcx));
+    __asm__ volatile("mov %%rdx, %0" : "=r"(rdx));
+    __asm__ volatile("mov %%rsi, %0" : "=r"(rsi));
+    __asm__ volatile("mov %%rdi, %0" : "=r"(rdi));
+    __asm__ volatile("mov %%rbp, %0" : "=r"(rbp));
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+    __asm__ volatile("mov %%r8, %0" : "=r"(r8));
+    __asm__ volatile("mov %%r9, %0" : "=r"(r9));
+    __asm__ volatile("mov %%r10, %0" : "=r"(r10));
+    __asm__ volatile("mov %%r11, %0" : "=r"(r11));
+    __asm__ volatile("mov %%r12, %0" : "=r"(r12));
+    __asm__ volatile("mov %%r13, %0" : "=r"(r13));
+    __asm__ volatile("mov %%r14, %0" : "=r"(r14));
+    __asm__ volatile("mov %%r15, %0" : "=r"(r15));
+
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    __asm__ volatile("pushfq; pop %0" : "=r"(rflags));
+
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("CPU Registers (x86_64 Long Mode):\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    vga_puts("-------------------------------------------------------------\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    vga_puts("RAX: "); print_hex(rax); vga_puts("  RBX: "); print_hex(rbx);
+    vga_puts("  RCX: "); print_hex(rcx); vga_puts("  RDX: "); print_hex(rdx); vga_putchar('\n');
+
+    vga_puts("RSI: "); print_hex(rsi); vga_puts("  RDI: "); print_hex(rdi);
+    vga_puts("  RBP: "); print_hex(rbp); vga_puts("  RSP: "); print_hex(rsp); vga_putchar('\n');
+
+    vga_puts("R8 : "); print_hex(r8);  vga_puts("  R9 : "); print_hex(r9);
+    vga_puts("  R10: "); print_hex(r10); vga_puts("  R11: "); print_hex(r11); vga_putchar('\n');
+
+    vga_puts("R12: "); print_hex(r12); vga_puts("  R13: "); print_hex(r13);
+    vga_puts("  R14: "); print_hex(r14); vga_puts("  R15: "); print_hex(r15); vga_putchar('\n');
+
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("CR0: "); print_hex(cr0); vga_puts("  CR2: "); print_hex(cr2);
+    vga_puts("  CR3: "); print_hex(cr3); vga_puts("  CR4: "); print_hex(cr4); vga_putchar('\n');
+
+    vga_puts("RFLAGS: "); print_hex(rflags);
+    vga_puts(" [ ");
+    if (rflags & 0x0001) vga_puts("CF ");
+    if (rflags & 0x0040) vga_puts("ZF ");
+    if (rflags & 0x0080) vga_puts("SF ");
+    if (rflags & 0x0200) vga_puts("IF ");
+    if (rflags & 0x0400) vga_puts("DF ");
+    if (rflags & 0x0800) vga_puts("OF ");
+    vga_puts("]\n");
+
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static int cmd_dump(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: dump <addr> [length]\n");
+        sound_error();
+        return 1;
+    }
+    uint64_t addr = parse_num(argv[1]);
+    uint64_t len = 64;
+    if (argc >= 3) {
+        len = parse_num(argv[2]);
+        if (len == 0) len = 64;
+        if (len > 512) len = 512;
+    }
+
+    uint8_t *ptr = (uint8_t *)(uintptr_t)addr;
+    char hex_byte[17];
+
+    for (uint64_t i = 0; i < len; i += 16) {
+        print_hex(addr + i);
+        vga_puts(": ");
+        for (uint64_t j = 0; j < 16; j++) {
+            if (i + j < len) {
+                uint8_t b = ptr[i + j];
+                utoa_hex(b, hex_byte);
+                if (b < 16) vga_putchar('0');
+                vga_puts(hex_byte);
+                vga_putchar(' ');
+            } else {
+                vga_puts("   ");
+            }
+            if (j == 7) vga_putchar(' ');
+        }
+        vga_puts(" |");
+        for (uint64_t j = 0; j < 16; j++) {
+            if (i + j < len) {
+                char c = (char)ptr[i + j];
+                if (c >= 32 && c <= 126) {
+                    vga_putchar(c);
+                } else {
+                    vga_putchar('.');
+                }
+            } else {
+                vga_putchar(' ');
+            }
+        }
+        vga_puts("|\n");
+    }
+    return 0;
+}
+
+static const char *calc_ptr;
+static int calc_err;
+
+static int64_t calc_parse_expr(void);
+
+static void calc_skip(void) {
+    while (*calc_ptr == ' ' || *calc_ptr == '\t') calc_ptr++;
+}
+
+static int64_t calc_parse_factor(void) {
+    calc_skip();
+    if (*calc_ptr == '+') {
+        calc_ptr++;
+        return calc_parse_factor();
+    }
+    if (*calc_ptr == '-') {
+        calc_ptr++;
+        return -calc_parse_factor();
+    }
+    if (*calc_ptr == '(') {
+        calc_ptr++;
+        int64_t v = calc_parse_expr();
+        calc_skip();
+        if (*calc_ptr == ')') {
+            calc_ptr++;
+        } else {
+            calc_err = 1;
+        }
+        return v;
+    }
+    if ((*calc_ptr >= '0' && *calc_ptr <= '9') ||
+        (*calc_ptr == '0' && (*(calc_ptr + 1) == 'x' || *(calc_ptr + 1) == 'X'))) {
+        const char *s = calc_ptr;
+        if (*calc_ptr == '0' && (*(calc_ptr + 1) == 'x' || *(calc_ptr + 1) == 'X')) {
+            calc_ptr += 2;
+            while ((*calc_ptr >= '0' && *calc_ptr <= '9') ||
+                   (*calc_ptr >= 'a' && *calc_ptr <= 'f') ||
+                   (*calc_ptr >= 'A' && *calc_ptr <= 'F')) {
+                calc_ptr++;
+            }
+        } else {
+            while (*calc_ptr >= '0' && *calc_ptr <= '9') calc_ptr++;
+        }
+        return (int64_t)parse_num(s);
+    }
+    calc_err = 1;
+    return 0;
+}
+
+static int64_t calc_parse_term(void) {
+    int64_t v = calc_parse_factor();
+    while (!calc_err) {
+        calc_skip();
+        char op = *calc_ptr;
+        if (op == '*' || op == '/' || op == '%') {
+            calc_ptr++;
+            int64_t rhs = calc_parse_factor();
+            if (calc_err) break;
+            if (op == '*') v *= rhs;
+            else if (op == '/') {
+                if (rhs == 0) {
+                    calc_err = 2;
+                    break;
+                }
+                v /= rhs;
+            } else if (op == '%') {
+                if (rhs == 0) {
+                    calc_err = 2;
+                    break;
+                }
+                v %= rhs;
+            }
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static int64_t calc_parse_expr(void) {
+    int64_t v = calc_parse_term();
+    while (!calc_err) {
+        calc_skip();
+        char op = *calc_ptr;
+        if (op == '+' || op == '-') {
+            calc_ptr++;
+            int64_t rhs = calc_parse_term();
+            if (calc_err) break;
+            if (op == '+') v += rhs;
+            else v -= rhs;
+        } else {
+            break;
+        }
+    }
+    return v;
+}
+
+static int cmd_calc(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: calc <expression>\n");
+        sound_error();
+        return 1;
+    }
+    char buf[128];
+    buf[0] = '\0';
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) strcat(buf, " ");
+        strcat(buf, argv[i]);
+    }
+    calc_ptr = buf;
+    calc_err = 0;
+    int64_t res = calc_parse_expr();
+    calc_skip();
+    if (*calc_ptr != '\0' && !calc_err) {
+        calc_err = 1;
+    }
+    if (calc_err == 1) {
+        vga_puts("calc error: invalid syntax\n");
+        sound_error();
+        return 1;
+    }
+    if (calc_err == 2) {
+        vga_puts("calc error: division by zero\n");
+        sound_error();
+        return 1;
+    }
+
+    char num[32];
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("Result: ");
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    if (res < 0) {
+        vga_putchar('-');
+        itoa((int)(-res), num);
+    } else {
+        itoa((int)res, num);
+    }
+    vga_puts(num);
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    vga_puts(" (");
+    print_hex((uint64_t)res);
+    vga_puts(")\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static uint8_t asm_payload[256];
+
+static int cmd_asm(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: asm <bytecode|nop|cli|sti|rdtsc|cpuid>\n");
+        sound_error();
+        return 1;
+    }
+
+    if (strcmp(argv[1], "nop") == 0) {
+        __asm__ volatile("nop");
+        vga_puts("ASM: nop executed\n");
+        return 0;
+    }
+    if (strcmp(argv[1], "cli") == 0) {
+        __asm__ volatile("cli");
+        vga_puts("ASM: cli executed\n");
+        return 0;
+    }
+    if (strcmp(argv[1], "sti") == 0) {
+        __asm__ volatile("sti");
+        vga_puts("ASM: sti executed\n");
+        return 0;
+    }
+    if (strcmp(argv[1], "rdtsc") == 0) {
+        uint32_t lo, hi;
+        __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        uint64_t tsc = ((uint64_t)hi << 32) | lo;
+        vga_puts("TSC: ");
+        print_hex(tsc);
+        vga_putchar('\n');
+        return 0;
+    }
+    if (strcmp(argv[1], "cpuid") == 0) {
+        uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+        char vendor[13];
+        *(uint32_t *)&vendor[0] = ebx;
+        *(uint32_t *)&vendor[4] = edx;
+        *(uint32_t *)&vendor[8] = ecx;
+        vendor[12] = '\0';
+        vga_puts("CPUID: ");
+        vga_puts(vendor);
+        vga_putchar('\n');
+        return 0;
+    }
+
+    size_t count = 0;
+    for (int i = 1; i < argc; i++) {
+        char *tok = argv[i];
+        if (tok[0] == '0' && (tok[1] == 'x' || tok[1] == 'X')) tok += 2;
+        size_t tlen = strlen(tok);
+        for (size_t k = 0; k < tlen; k += 2) {
+            if (count >= sizeof(asm_payload) - 2) break;
+            char sub[3];
+            sub[0] = tok[k];
+            sub[1] = (k + 1 < tlen) ? tok[k + 1] : '\0';
+            sub[2] = '\0';
+            asm_payload[count++] = (uint8_t)parse_num(sub);
+        }
+    }
+
+    if (count == 0) {
+        vga_puts("asm: invalid bytecode\n");
+        sound_error();
+        return 1;
+    }
+
+    if (asm_payload[count - 1] != 0xC3) {
+        asm_payload[count++] = 0xC3;
+    }
+
+    typedef uint64_t (*asm_call_t)(void);
+    asm_call_t code = (asm_call_t)(uintptr_t)asm_payload;
+    uint64_t out_rax = code();
+
+    char num[32];
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("ASM Return RAX: ");
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    print_hex(out_rax);
+    vga_puts(" (");
+    itoa((int)out_rax, num);
+    vga_puts(num);
+    vga_puts(")\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static int cmd_colr(int argc, char **argv) {
+    if (argc < 2) {
+        vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        vga_puts("16 Available Colors (0-15):\n");
+        for (int i = 0; i < 16; i++) {
+            char num[8];
+            itoa(i, num);
+            vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+            vga_puts("  ");
+            if (i < 10) {
+                vga_putchar(' ');
+            }
+            vga_puts(num);
+            vga_puts(": ");
+            vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            print_str_pad(vga_get_color_name((uint8_t)i), 15);
+            vga_set_color((uint8_t)i, VGA_COLOR_BLACK);
+            vga_putchar((char)0xDB);
+            vga_putchar('\n');
+        }
+        vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        vga_puts("usage: colr <color>  (e.g. colr red, colr 4, colr (blue))\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 0;
+    }
+
+    char arg_buf[64];
+    arg_buf[0] = '\0';
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) {
+            strcat(arg_buf, " ");
+        }
+        strcat(arg_buf, argv[i]);
+    }
+
+    int color = vga_parse_color(arg_buf);
+    if (color < 0 || color > 15) {
+        vga_puts("colr: unknown color '");
+        vga_puts(arg_buf);
+        vga_puts("'. (type 'colr' for list of 16 colors)\n");
+        sound_error();
+        return 1;
+    }
+
+    vga_set_color((uint8_t)color, VGA_COLOR_BLACK);
+    vga_putchar((char)0xDB);
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_putchar('\n');
+    return 0;
+}
+
+static int cmd_heap(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "test") == 0) {
+        vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        vga_puts("Running Kernel Heap Allocator Self-Test (malloc, calloc, realloc, free)...\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+        int res = heap_self_test();
+        if (res == 0) {
+            vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+            vga_puts("[  OK  ] All heap allocator tests passed successfully!\n");
+        } else {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            vga_puts("[ FAIL ] Heap self-test failed with code: ");
+            char num[8];
+            itoa(res, num);
+            vga_puts(num);
+            vga_putchar('\n');
+            sound_error();
+        }
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return res;
+    }
+
+    char num[32];
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("Kernel Heap Allocator Status (malloc / free):\n");
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    vga_puts("-------------------------------------------------------------\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    vga_puts("  Total Heap Size:    ");
+    itoa((int)(heap_get_total() / 1024), num);
+    vga_puts(num);
+    vga_puts(" KiB (16 MiB)\n");
+
+    vga_puts("  Used Heap Memory:   ");
+    itoa((int)heap_get_used(), num);
+    vga_puts(num);
+    vga_puts(" Bytes\n");
+
+    vga_puts("  Free Heap Memory:   ");
+    itoa((int)(heap_get_free() / 1024), num);
+    vga_puts(num);
+    vga_puts(" KiB\n");
+
+    vga_puts("  Active Allocations: ");
+    itoa((int)heap_get_alloc_count(), num);
+    vga_puts(num);
+    vga_puts("\n");
+
+    vga_puts("  Heap Address Range: ");
+    print_hex(heap_get_start_addr());
+    vga_puts(" - ");
+    print_hex(heap_get_end_addr());
+    vga_puts("\n");
+
+    vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    vga_puts("-------------------------------------------------------------\n");
+    vga_puts("Type 'heap test' to run full diagnostic validation suite.\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static void cmd_help(void) {
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("dismasmOS 1.4 Available Commands:\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_puts("  wdid       - manual reader like linux man (wdid <cmd>, scroll: wheel/pgup/pgdn)\n");
+    vga_puts("  help       - display available commands\n");
+    vga_puts("  clear      - clear console screen\n");
+    vga_puts("  colr       - display 16-color 1-bit spot for color (colr <color>)\n");
+    vga_puts("  heap       - kernel heap allocator status & self-test (heap test)\n");
+    vga_puts("  calc       - integer arithmetic calculator (calc 10 + 5 * 2)\n");
+    vga_puts("  dump       - memory hex and ascii dump (dump 0x1000 64)\n");
+    vga_puts("  reg        - display cpu 64-bit and control registers\n");
+    vga_puts("  asm        - execute raw machine code or opcode mnemonic\n");
+    vga_puts("  lsf        - list files and dirs (flags: -s size in KiB & hex, -p perms)\n");
+    vga_puts("  cd         - change working directory\n");
+    vga_puts("  makedir    - create a new directory\n");
+    vga_puts("  changes    - view filesystem access and modification audit log\n");
+    vga_puts("  em         - vi-style text editor (Alt for commands: ;wsc, ;q, ;s, ;-m)\n");
+    vga_puts("  cat        - display file content\n");
+    vga_puts("  echo       - print or redirect text into file (> file)\n");
+    vga_puts("  touch      - create empty file\n");
+    vga_puts("  rm         - remove file or directory\n");
+    vga_puts("  grep       - search pattern in file\n");
+    vga_puts("  pr         - live hardware monitor (ESC/q to exit) or process control\n");
+    vga_puts("  blkid      - list detected disks, media tags (VHD/HD/SD) & NTFS UUIDs\n");
+    vga_puts("  ntfsinfo   - display ATA IDENTIFY drive data & NTFS VBR/$MFT status\n");
+    vga_puts("  ntfsformat - format an ATA drive as NTFS 3.1 (ntfsformat [/dev/sdX])\n");
+    vga_puts("  ntfsls     - list files on persistent NTFS volume (resident/non-resident)\n");
+    vga_puts("  ntfscat    - read file from NTFS volume (ntfscat <file>)\n");
+    vga_puts("  ntfswrite  - create/overwrite file persistently on NTFS (ntfswrite <f> <txt>)\n");
+    vga_puts("  ntfstouch  - create empty persistent file on NTFS (ntfstouch <file>)\n");
+    vga_puts("  toc        - list files in ATA LBA28 Table of Contents (ToC Sector 0)\n");
+    vga_puts("  atasave    - save data to ATA disk extent via ToC (rep outsw)\n");
+    vga_puts("  ataload    - load data from ATA disk extent via ToC (rep insw)\n");
+    vga_puts("  uname      - system information\n");
+    vga_puts("  MemRep     - memory allocation report\n");
+    vga_puts("  lang       - switch keyboard layout (de / en)\n");
+    vga_puts("  shutdown   - power off / halt system via hardware assembly\n");
+    vga_puts("  reboot     - reboot machine\n");
+    vga_puts("  &&         - chain multiple commands sequentially\n");
+}
+
 
 static void cmd_echo(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
@@ -232,36 +816,152 @@ static void cmd_echo(int argc, char **argv) {
     vga_putchar('\n');
 }
 
-static void cmd_cat(int argc, char **argv) {
+static int cmd_cd(int argc, char **argv) {
+    if (argc < 2 || strcmp(argv[1], "~") == 0) {
+        strcpy(shell_cwd, "/home");
+        return 0;
+    }
+    if (strcmp(argv[1], "/") == 0) {
+        strcpy(shell_cwd, "/");
+        return 0;
+    }
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (fs_is_dir(resolved)) {
+        strncpy(shell_cwd, resolved, FS_MAX_PATH - 1);
+        shell_cwd[FS_MAX_PATH - 1] = '\0';
+        return 0;
+    } else {
+        vga_puts("cd: no such directory: ");
+        vga_puts(argv[1]);
+        vga_putchar('\n');
+        sound_error();
+        return 1;
+    }
+}
+
+static int cmd_makedir(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: makedir <directory>\n");
+        sound_error();
+        return 1;
+    }
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (fs_find(resolved) != NULL || strcmp(resolved, "/") == 0) {
+        vga_puts("makedir: directory already exists: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+        sound_error();
+        return 1;
+    }
+
+    if (fs_mkdir(resolved) == 0) {
+        fs_log_change("CREATED", "root", resolved);
+        vga_puts("created directory: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+        return 0;
+    } else {
+        vga_puts("makedir: cannot create directory\n");
+        sound_error();
+        return 1;
+    }
+}
+
+static int cmd_lsf(int argc, char **argv) {
+    int show_size = 0;
+    int show_perm = 0;
+    const char *target = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            for (size_t k = 1; argv[i][k] != '\0'; k++) {
+                if (argv[i][k] == 's') {
+                    show_size = 1;
+                } else if (argv[i][k] == 'p') {
+                    show_perm = 1;
+                }
+            }
+        } else {
+            target = argv[i];
+        }
+    }
+
+    char resolved[FS_MAX_PATH];
+    if (target) {
+        fs_resolve_path(shell_cwd, target, resolved);
+    } else {
+        strncpy(resolved, shell_cwd, FS_MAX_PATH - 1);
+        resolved[FS_MAX_PATH - 1] = '\0';
+    }
+
+    if (!fs_is_dir(resolved)) {
+        vga_puts("lsf: not a directory: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+        sound_error();
+        return 1;
+    }
+
+    fs_list(resolved, show_size, show_perm);
+    return 0;
+}
+
+static void cmd_changes(void) {
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("Filesystem Audit Log (changes):\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    fs_show_changes();
+}
+
+static int cmd_cat(int argc, char **argv) {
     if (argc < 2) {
         vga_puts("usage: cat <file>\n");
-        return;
+        sound_error();
+        return 1;
     }
-    struct fs_file *file = fs_find(argv[1]);
-    if (!file) {
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    struct fs_file *file = fs_find(resolved);
+    if (!file || file->is_dir) {
         vga_puts("cat: file not found: ");
         vga_puts(argv[1]);
         vga_putchar('\n');
-        return;
+        sound_error();
+        return 1;
     }
+
+    fs_log_change("VIEW", "root", resolved);
     vga_puts(file->data);
     if (file->size > 0 && file->data[file->size - 1] != '\n') {
         vga_putchar('\n');
     }
+    return 0;
 }
 
-static void cmd_grep(int argc, char **argv) {
+static int cmd_grep(int argc, char **argv) {
     if (argc < 3) {
         vga_puts("usage: grep <pattern> <file>\n");
-        return;
+        sound_error();
+        return 1;
     }
-    struct fs_file *file = fs_find(argv[2]);
-    if (!file) {
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[2], resolved);
+
+    struct fs_file *file = fs_find(resolved);
+    if (!file || file->is_dir) {
         vga_puts("grep: file not found: ");
         vga_puts(argv[2]);
         vga_putchar('\n');
-        return;
+        sound_error();
+        return 1;
     }
+
+    fs_log_change("VIEW", "root", resolved);
 
     char line[256];
     size_t line_idx = 0;
@@ -283,17 +983,52 @@ static void cmd_grep(int argc, char **argv) {
             }
         }
     }
+    return 0;
 }
 
-static void cmd_touch(int argc, char **argv) {
+static int cmd_touch(int argc, char **argv) {
     if (argc < 2) {
         vga_puts("usage: touch <file>\n");
-        return;
+        sound_error();
+        return 1;
     }
-    if (fs_create(argv[1]) != 0) {
-        if (!fs_find(argv[1])) {
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (!fs_find(resolved)) {
+        if (fs_create(resolved) == 0) {
+            fs_log_change("CREATED", "root", resolved);
+            return 0;
+        } else {
             vga_puts("touch: cannot create file\n");
+            sound_error();
+            return 1;
         }
+    }
+    return 0;
+}
+
+static int cmd_rm(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: rm <file>\n");
+        sound_error();
+        return 1;
+    }
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    if (fs_delete(resolved) == 0) {
+        fs_log_change("DELETED", "root", resolved);
+        vga_puts("removed: ");
+        vga_puts(resolved);
+        vga_putchar('\n');
+        return 0;
+    } else {
+        vga_puts("rm: file not found: ");
+        vga_puts(argv[1]);
+        vga_putchar('\n');
+        sound_error();
+        return 1;
     }
 }
 
@@ -301,21 +1036,291 @@ static void cmd_uname(void) {
     vga_puts("dismasmOS 1.2 (x86_64 Long Mode 64-Bit)\nCreation of the Saviour\nMay God lead this Creation\n");
 }
 
-static void cmd_pr(int argc, char **argv) {
+static void cmd_toc(void) {
+    if (ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] Persistent NTFS volume is mounted at /ntfs.\n"
+                 "       Sector 0 contains the NTFS Volume Boot Record (VBR), not a raw ToC.\n"
+                 "       Use 'ntfsls' or 'lsf /ntfs' to list persistent files.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return;
+    }
+    fs_ata_list_toc();
+}
+
+static void cmd_atasave(int argc, char **argv) {
+    if (ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] NTFS volume is active! Use 'ntfswrite' or '/ntfs/...' instead,\n"
+                 "       so Sector 0 (NTFS VBR) is not overwritten by the raw ToC.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return;
+    }
+    if (argc < 3) {
+        vga_puts("usage: atasave <8_char_name> <content>\n");
+        return;
+    }
+    char name8[8];
+    memset(name8, ' ', 8);
+    size_t nlen = strlen(argv[1]);
+    if (nlen > 8) nlen = 8;
+    memcpy(name8, argv[1], nlen);
+
+    size_t dlen = strlen(argv[2]);
+    int res = fs_ata_save_file(name8, argv[2], (uint32_t)dlen);
+    if (res == 0) {
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        vga_puts("OK: File written successfully to ATA block extent!\n");
+    } else {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("Error writing to ATA sectors!\n");
+    }
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+static void cmd_ataload(int argc, char **argv) {
+    if (ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] NTFS volume is active! Use 'ntfscat' or 'cat /ntfs/...' instead.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return;
+    }
     if (argc < 2) {
-        proc_status_all();
+        vga_puts("usage: ataload <8_char_name>\n");
+        return;
+    }
+    char name8[8];
+    memset(name8, ' ', 8);
+    size_t nlen = strlen(argv[1]);
+    if (nlen > 8) nlen = 8;
+    memcpy(name8, argv[1], nlen);
+
+    static char load_buf[4096];
+    memset(load_buf, 0, sizeof(load_buf));
+    int bytes = fs_ata_load_file(name8, load_buf);
+    if (bytes >= 0) {
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        vga_puts("OK: File loaded from ATA disk (");
+        char nbuf[16];
+        itoa(bytes, nbuf);
+        vga_puts(nbuf);
+        vga_puts(" bytes):\n");
+        vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        load_buf[bytes < 4095 ? bytes : 4095] = '\0';
+        vga_puts(load_buf);
+        vga_putchar('\n');
+    } else {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("Error: File not found in ToC or ATA I/O error!\n");
+    }
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+static int cmd_ntfsformat(int argc, char **argv) {
+    int slot = ata_get_active_slot();
+    if (argc >= 2) {
+        int matched = -1;
+        for (int s = 0; s < ATA_MAX_DRIVES; s++) {
+            const struct ata_drive_info *d = ata_get_drive_by_slot(s);
+            if (!d || !d->present) {
+                continue;
+            }
+            if (strcmp(argv[1], d->dev_name) == 0 || strcmp(argv[1], d->tag) == 0) {
+                matched = s;
+                break;
+            }
+        }
+        if (matched < 0 && argv[1][0] >= '0' && argv[1][0] <= '3' && argv[1][1] == '\0') {
+            matched = argv[1][0] - '0';
+        }
+        if (matched < 0) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            vga_puts("ntfsformat: unknown drive '");
+            vga_puts(argv[1]);
+            vga_puts("'. Use 'blkid' to list available drives.\n");
+            vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return 1;
+        }
+        slot = matched;
+    }
+
+    const struct ata_drive_info *drv = ata_get_drive_by_slot(slot);
+    if (!drv || !drv->present) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No formattable ATA hard drive detected in target slot.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("Formatting ");
+    vga_puts(drv->dev_name);
+    vga_puts(" [");
+    vga_puts(drv->tag);
+    vga_puts("] (");
+    vga_puts(drv->model);
+    vga_puts(") as NTFS 3.1...\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    if (ntfs_format_slot(slot, drv->tag) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("[FAIL] NTFS 3.1 formatting failed!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    if (!ntfs_is_mounted() || slot == ata_get_active_slot()) {
+        ata_select_drive(slot);
+        if (ntfs_init_slot(slot, 1) == 0) {
+            fs_mount_ntfs();
+        }
+    }
+
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("[OK] Formatted ");
+    vga_puts(drv->dev_name);
+    vga_puts(" as NTFS 3.1 with tag ");
+    vga_puts(drv->tag);
+    vga_puts(".\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static int cmd_ntfscat(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: ntfscat <file>\n");
+        return 1;
+    }
+    if (!ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No NTFS filesystem mounted!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    struct ntfs_file_info finfo;
+    if (ntfs_find_file(argv[1], &finfo) != 0 || finfo.is_directory) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("ntfscat: file not found on NTFS volume: ");
+        vga_puts(argv[1]);
+        vga_putchar('\n');
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    size_t alloc_len = (size_t)finfo.real_size + 1U;
+    if (alloc_len > 262144U) {
+        alloc_len = 262144U;
+    }
+    char *buf = (char *)malloc(alloc_len);
+    if (!buf) {
+        vga_puts("ntfscat: out of kernel heap memory!\n");
+        return 1;
+    }
+
+    int64_t rd = ntfs_read_file(argv[1], buf, alloc_len - 1U);
+    if (rd < 0) {
+        free(buf);
+        vga_puts("ntfscat: read error while accessing $DATA!\n");
+        return 1;
+    }
+    buf[rd] = '\0';
+
+    vga_write(buf, (size_t)rd);
+    if (rd > 0 && buf[rd - 1] != '\n') {
+        vga_putchar('\n');
+    }
+
+    free(buf);
+    return 0;
+}
+
+static int cmd_ntfswrite(int argc, char **argv) {
+    if (argc < 3) {
+        vga_puts("usage: ntfswrite <file> <content...>\n");
+        return 1;
+    }
+    if (!ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No NTFS filesystem mounted!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    static char write_buf[FS_MAX_FILESIZE];
+    write_buf[0] = '\0';
+    for (int i = 2; i < argc; i++) {
+        if (i > 2) {
+            strncat(write_buf, " ", sizeof(write_buf) - strlen(write_buf) - 1);
+        }
+        strncat(write_buf, argv[i], sizeof(write_buf) - strlen(write_buf) - 1);
+    }
+
+    size_t len = strlen(write_buf);
+    if (ntfs_write_or_create_file(argv[1], write_buf, len) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("[FAIL] NTFS write operation failed!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    fs_mount_ntfs();
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("[OK] Persistently written to NTFS & committed via 0xEA cache flush (");
+    char nbuf[16];
+    itoa((int)len, nbuf);
+    vga_puts(nbuf);
+    vga_puts(" bytes).\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static int cmd_ntfstouch(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: ntfstouch <file>\n");
+        return 1;
+    }
+    if (!ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No NTFS filesystem mounted!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    if (ntfs_find_file(argv[1], NULL) == 0) {
+        vga_puts("ntfstouch: file already exists on NTFS volume.\n");
+        return 0;
+    }
+    if (ntfs_create_file(argv[1]) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("[FAIL] Could not allocate new NTFS file in $MFT/$I30!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    fs_mount_ntfs();
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("[OK] Created new persistent file in NTFS ($MFT + $I30): ");
+    vga_puts(argv[1]);
+    vga_putchar('\n');
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static void cmd_pr(int argc, char **argv) {
+    /* When 'pr' is invoked without arguments or with 'live'/'mon', launch the live monitor */
+    if (argc < 2 || strcmp(argv[1], "live") == 0 || strcmp(argv[1], "mon") == 0) {
+        pr_monitor_loop();
         return;
     }
 
     if (strcmp(argv[1], "start") == 0) {
         if (argc < 3) {
-            vga_puts("usage: pr start <prozess>\n");
+            vga_puts("usage: pr start <process>\n");
             return;
         }
         proc_start(argv[2]);
     } else if (strcmp(argv[1], "kill") == 0) {
         if (argc < 3) {
-            vga_puts("usage: pr kill <prozess>\n");
+            vga_puts("usage: pr kill <process>\n");
             return;
         }
         proc_kill(argv[2]);
@@ -327,7 +1332,7 @@ static void cmd_pr(int argc, char **argv) {
         }
     } else if (strcmp(argv[1], "-c") == 0) {
         if (argc < 4) {
-            vga_puts("usage: pr -c <comment> <prozess>\n");
+            vga_puts("usage: pr -c <comment> <process>\n");
             return;
         }
         char comment_buf[PROC_COMMENT_MAX];
@@ -349,7 +1354,10 @@ static void cmd_em(int argc, char **argv) {
         vga_puts("usage: em <file>\n");
         return;
     }
-    em_run(argv[1]);
+    char resolved[FS_MAX_PATH];
+    fs_resolve_path(shell_cwd, argv[1], resolved);
+
+    em_run(resolved);
     vga_clear();
 }
 
@@ -372,51 +1380,117 @@ static int tokenize(char *line, char **argv, int max_args) {
     return argc;
 }
 
-static void execute_command(int argc, char **argv) {
+static int execute_command(int argc, char **argv) {
     if (argc == 0) {
-        return;
+        return 0;
     }
-    if (strcmp(argv[0], "help") == 0) {
+    if (strcmp(argv[0], "wdid") == 0 || strcmp(argv[0], "man") == 0) {
+        return cmd_wdid(argc, argv);
+    } else if (strcmp(argv[0], "help") == 0) {
         cmd_help();
+        return 0;
     } else if (strcmp(argv[0], "clear") == 0) {
         vga_clear();
+        return 0;
+    } else if (strcmp(argv[0], "colr") == 0) {
+        return cmd_colr(argc, argv);
+    } else if (strcmp(argv[0], "heap") == 0) {
+        return cmd_heap(argc, argv);
+    } else if (strcmp(argv[0], "calc") == 0) {
+        return cmd_calc(argc, argv);
+    } else if (strcmp(argv[0], "dump") == 0) {
+        return cmd_dump(argc, argv);
+    } else if (strcmp(argv[0], "reg") == 0) {
+        return cmd_reg();
+    } else if (strcmp(argv[0], "asm") == 0) {
+        return cmd_asm(argc, argv);
     } else if (strcmp(argv[0], "echo") == 0) {
         cmd_echo(argc, argv);
-    } else if (strcmp(argv[0], "ls") == 0) {
-        fs_list();
+        return 0;
+    } else if (strcmp(argv[0], "lsf") == 0) {
+        return cmd_lsf(argc, argv);
+    } else if (strcmp(argv[0], "cd") == 0) {
+        return cmd_cd(argc, argv);
+    } else if (strcmp(argv[0], "makedir") == 0) {
+        return cmd_makedir(argc, argv);
+    } else if (strcmp(argv[0], "changes") == 0) {
+        cmd_changes();
+        return 0;
+    } else if (strcmp(argv[0], "rm") == 0) {
+        return cmd_rm(argc, argv);
     } else if (strcmp(argv[0], "cat") == 0) {
-        cmd_cat(argc, argv);
+        return cmd_cat(argc, argv);
     } else if (strcmp(argv[0], "grep") == 0) {
-        cmd_grep(argc, argv);
+        return cmd_grep(argc, argv);
     } else if (strcmp(argv[0], "touch") == 0) {
-        cmd_touch(argc, argv);
+        return cmd_touch(argc, argv);
     } else if (strcmp(argv[0], "uname") == 0) {
         cmd_uname();
+        return 0;
     } else if (strcmp(argv[0], "MemRep") == 0 || strcmp(argv[0], "memrep") == 0) {
         cmd_memrep();
+        return 0;
     } else if (strcmp(argv[0], "lang") == 0) {
         cmd_lang(argc, argv);
+        return 0;
     } else if (strcmp(argv[0], "pr") == 0) {
         cmd_pr(argc, argv);
+        return 0;
+    } else if (strcmp(argv[0], "toc") == 0 || strcmp(argv[0], "atals") == 0) {
+        cmd_toc();
+        return 0;
+    } else if (strcmp(argv[0], "atasave") == 0) {
+        cmd_atasave(argc, argv);
+        return 0;
+    } else if (strcmp(argv[0], "ataload") == 0) {
+        cmd_ataload(argc, argv);
+        return 0;
+    } else if (strcmp(argv[0], "blkid") == 0 || strcmp(argv[0], "lsblk") == 0) {
+        ntfs_print_blkid();
+        return 0;
+    } else if (strcmp(argv[0], "ntfsinfo") == 0 || strcmp(argv[0], "disk") == 0) {
+        ntfs_print_info();
+        return 0;
+    } else if (strcmp(argv[0], "ntfsformat") == 0 || strcmp(argv[0], "mkfs.ntfs") == 0) {
+        return cmd_ntfsformat(argc, argv);
+    } else if (strcmp(argv[0], "ntfsls") == 0) {
+        ntfs_print_root_dir();
+        return 0;
+    } else if (strcmp(argv[0], "ntfscat") == 0) {
+        return cmd_ntfscat(argc, argv);
+    } else if (strcmp(argv[0], "ntfswrite") == 0) {
+        return cmd_ntfswrite(argc, argv);
+    } else if (strcmp(argv[0], "ntfstouch") == 0) {
+        return cmd_ntfstouch(argc, argv);
     } else if (strcmp(argv[0], "em") == 0) {
         cmd_em(argc, argv);
+        return 0;
+    } else if (strcmp(argv[0], "shutdown") == 0) {
+        sys_shutdown();
+        return 0;
     } else if (strcmp(argv[0], "reboot") == 0) {
         sys_reboot();
+        return 0;
     } else {
         vga_puts("unknown command: ");
         vga_puts(argv[0]);
         vga_puts(" (type 'help' for list)\n");
+        sound_error();
+        return 1;
     }
 }
 
 static void print_prompt(void) {
     vga_set_color(VGA_COLOR_RED, VGA_COLOR_BLACK);
     vga_puts("root@admin@dismasmOS");
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_putchar(':');
+    vga_puts(shell_cwd);
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     vga_puts(" | >>> ");
 }
 
-static void handle_line(char *cmd_buf) {
+static int handle_single_command(char *cmd_buf) {
     char *redir = strchr(cmd_buf, '>');
     if (redir != NULL) {
         *redir = '\0';
@@ -432,7 +1506,8 @@ static void handle_line(char *cmd_buf) {
 
         if (*target == '\0') {
             vga_puts("syntax error: no file after '>'\n");
-            return;
+            sound_error();
+            return 1;
         }
 
         char *cmd_left = cmd_buf;
@@ -459,29 +1534,122 @@ static void handle_line(char *cmd_buf) {
                 }
             }
 
-            if (!fs_find(target)) {
-                if (fs_create(target) != 0) {
+            char resolved_target[FS_MAX_PATH];
+            fs_resolve_path(shell_cwd, target, resolved_target);
+
+            int exists = (fs_find(resolved_target) != NULL);
+            if (!exists) {
+                if (fs_create(resolved_target) != 0) {
                     vga_puts("error: cannot create file: ");
-                    vga_puts(target);
+                    vga_puts(resolved_target);
                     vga_putchar('\n');
-                    return;
+                    sound_error();
+                    return 1;
                 }
+                fs_log_change("CREATED", "root", resolved_target);
             }
-            fs_write(target, text, strlen(text));
-            return;
+            fs_write(resolved_target, text, strlen(text));
+            if (exists) {
+                fs_log_change("EDITED", "root", resolved_target);
+            }
+            return 0;
         }
     }
 
     char *argv[MAX_ARGS];
     int argc = tokenize(cmd_buf, argv, MAX_ARGS);
-    execute_command(argc, argv);
+    return execute_command(argc, argv);
+}
+
+static void handle_line(char *cmd_buf) {
+    char *p = cmd_buf;
+    while (*p != '\0') {
+        char *sep = strstr(p, "&&");
+        if (sep != NULL) {
+            *sep = '\0';
+            char *sub = p;
+            p = sep + 2;
+            while (*sub == ' ' || *sub == '\t') sub++;
+            char *end = sub + strlen(sub);
+            while (end > sub && (*(end - 1) == ' ' || *(end - 1) == '\t')) end--;
+            *end = '\0';
+            if (*sub != '\0') {
+                int res = handle_single_command(sub);
+                if (res != 0) {
+                    return;
+                }
+            }
+        } else {
+            while (*p == ' ' || *p == '\t') p++;
+            char *end = p + strlen(p);
+            while (end > p && (*(end - 1) == ' ' || *(end - 1) == '\t')) end--;
+            *end = '\0';
+            if (*p != '\0') {
+                handle_single_command(p);
+            }
+            break;
+        }
+    }
+}
+
+#define HIST_MAX 32
+static char hist_entries[HIST_MAX][CMD_MAX_LEN];
+static int hist_total = 0;
+static int hist_index = -1;
+
+static void hist_add(const char *cmd) {
+    if (cmd == NULL || cmd[0] == '\0') {
+        return;
+    }
+    if (hist_total > 0 && strcmp(hist_entries[(hist_total - 1) % HIST_MAX], cmd) == 0) {
+        return;
+    }
+    strncpy(hist_entries[hist_total % HIST_MAX], cmd, CMD_MAX_LEN - 1);
+    hist_entries[hist_total % HIST_MAX][CMD_MAX_LEN - 1] = '\0';
+    hist_total++;
 }
 
 void shell_init(void) {
     vga_clear();
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_puts("dismasmOS 1.2 (x86_64 Long Mode 64-Bit) - Microkernel\n");
-    vga_puts("Type 'help' for help.\n\n");
+    vga_puts("dismasmOS ");
+    vga_puts(SYSTEM_VERSION);
+    vga_puts(" (x86_64 Long Mode 64-Bit) - Microkernel\n");
+    if (!ata_is_present()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No hard drive detected! Running in RAMFS-only mode.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    } else if (ntfs_is_mounted()) {
+        const struct ata_drive_info *drv = ata_get_drive_info();
+        const struct ntfs_volume_info *vol = ntfs_get_volume_info();
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        if (vol->newly_formatted) {
+            vga_puts("[OK] First-boot NTFS 3.1 auto-formatted: [");
+        } else {
+            vga_puts("[OK] Persistent disk [");
+        }
+        vga_puts(drv->tag);
+        vga_puts("] (");
+        vga_puts(drv->dev_name);
+        vga_puts(": ");
+        vga_puts(drv->model);
+        vga_puts(") | UUID=");
+        vga_puts(vol->uuid_str);
+        vga_puts(" -> /ntfs\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    } else {
+        const struct ata_drive_info *drv = ata_get_drive_info();
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] Disk [");
+        vga_puts(drv->tag);
+        vga_puts("] (");
+        vga_puts(drv->dev_name);
+        vga_puts(": ");
+        vga_puts(drv->model);
+        vga_puts(") detected, but no NTFS volume could be mounted.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+    vga_puts("Type 'help' for commands or 'blkid' for storage devices.\n\n");
     print_prompt();
 }
 
@@ -490,10 +1658,14 @@ void shell_run(void) {
     size_t cmd_len = 0;
 
     while (1) {
-        char c = kbd_getchar();
+        int c = kbd_getchar();
         if (c == '\n') {
             vga_putchar('\n');
             cmd_buf[cmd_len] = '\0';
+            if (cmd_len > 0) {
+                hist_add(cmd_buf);
+            }
+            hist_index = -1;
             handle_line(cmd_buf);
             cmd_len = 0;
             print_prompt();
@@ -502,10 +1674,45 @@ void shell_run(void) {
                 cmd_len--;
                 vga_backspace();
             }
-        } else if ((uint8_t)c >= 32 && (uint8_t)c != 127) {
+        } else if (c == KEY_UP) {
+            int count = (hist_total > HIST_MAX) ? HIST_MAX : hist_total;
+            if (count > 0) {
+                if (hist_index == -1) {
+                    hist_index = hist_total - 1;
+                } else if (hist_index > hist_total - count) {
+                    hist_index--;
+                }
+                while (cmd_len > 0) {
+                    vga_backspace();
+                    cmd_len--;
+                }
+                int idx = hist_index % HIST_MAX;
+                strcpy(cmd_buf, hist_entries[idx]);
+                cmd_len = strlen(cmd_buf);
+                vga_puts(cmd_buf);
+            }
+        } else if (c == KEY_DOWN) {
+            if (hist_index != -1) {
+                while (cmd_len > 0) {
+                    vga_backspace();
+                    cmd_len--;
+                }
+                if (hist_index < hist_total - 1) {
+                    hist_index++;
+                    int idx = hist_index % HIST_MAX;
+                    strcpy(cmd_buf, hist_entries[idx]);
+                    cmd_len = strlen(cmd_buf);
+                    vga_puts(cmd_buf);
+                } else {
+                    hist_index = -1;
+                    cmd_buf[0] = '\0';
+                    cmd_len = 0;
+                }
+            }
+        } else if ((c >= 32 && c <= 255) && c != 127) {
             if (cmd_len < CMD_MAX_LEN - 1) {
-                cmd_buf[cmd_len++] = c;
-                vga_putchar(c);
+                cmd_buf[cmd_len++] = (char)c;
+                vga_putchar((char)c);
             }
         }
     }

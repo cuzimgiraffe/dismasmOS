@@ -6,7 +6,7 @@
 *.iso
 *.img
 *.elf
-
+changes.txt
 isodir/
 
 .vscode/
@@ -14,6 +14,8 @@ isodir/
 *.swp
 *.swo
 *~
+.vs/
+.docs/
 
 Thumbs.db
 [Dd]esktop.ini
