@@ -20,7 +20,12 @@ dismasmOS is an ultra-lean, deterministic, freestanding x86_64 Long Mode operati
 * **64-Bit Long Mode Microkernel**: 4-level paging (PML4, PDPT, PD) with a 1 GiB identity-mapped address space using 2 MiB huge pages, custom 64-bit Global Descriptor Table (GDT64), and a 256-gate 64-bit Interrupt Descriptor Table (IDT).
 * **Freestanding Heap Memory Allocator**: Custom 16 MiB dynamic memory allocator implementing malloc, free, calloc, and realloc from scratch with 16-byte alignment, 48-byte headers, double-free detection, and bidirectional coalescing.
 * **Deterministic Input Engine**: Fully compliant German DIN 2137-2 (QWERTZ) and US (QWERTY) keyboard mapping using C99 designated initializers, complete AltGr decoding, ISO-key support, and extended PS/2 scancode decoding for dedicated hardware Arrow Keys and Alt navigation.
+<<<<<<< HEAD
+* **Interactive CLI Shell & Command Chaining**: Robust Read-Eval-Print Loop supporting sequential command chaining via the && operator, a 32-entry command history with hardware Arrow Key recall, and 24 native commands.
+* **Interactive System Manual & Pager ("wdid")**: Full-screen documentation reader functioning like Linux man, featuring detailed English explanations for all commands, PS/2 mouse scroll wheel decoding, and Page Up/Page Down keyboard navigation.
+=======
 * **Interactive CLI Shell & Command Chaining**: Robust Read-Eval-Print Loop supporting sequential command chaining via the && operator, a 32-entry command history with hardware Arrow Key recall, and 23 native commands.
+>>>>>>> 4e4e01247f9384c7049a1030c1bf3ee712054a31
 * **Direct Assembly & Machine Code Execution**: Integrated dynamic execution engine allowing raw machine bytecode or processor mnemonics (nop, rdtsc, cpuid, cli, sti) to be executed directly in memory with RAX and RDX return register inspection.
 * **System & Register Diagnostics**: Live inspection of all 64-bit general-purpose registers (RAX through R15), control registers (CR0, CR2, CR3, CR4), and RFLAGS status flags, paired with formatted hexadecimal and ASCII memory dumping.
 * **Integrated CLI Calculator**: Recursive-descent integer and hexadecimal calculator supporting addition, subtraction, multiplication, division, modulo, and nested parenthetical expressions.
@@ -88,7 +93,11 @@ dismasmOS initializes from a Multiboot 1 compliant bootloader (such as GRUB 2) a
 ### Centralized System Version & Configuration
 
 System identity and build metadata are centralized in dedicated global descriptors:
+<<<<<<< HEAD
+* System Version: "1.2"
+=======
 * System Version: "1.4"
+>>>>>>> 4e4e01247f9384c7049a1030c1bf3ee712054a31
 * System Build: "2026"
 
 These values are consumed uniformly across kernel boot telemetry banners, shell prompts, diagnostic reports, and shutdown status screens.
@@ -274,10 +283,18 @@ The command-line interface operates via an in-place tokenizing Read-Eval-Print L
 
 ## 8. Complete Command Reference Suite
 
+<<<<<<< HEAD
+dismasmOS provides 24 native commands:
+
+| Command | Syntax Signature | Operational Semantics |
+| :--- | :--- | :--- |
+| `wdid` | `wdid [command]` | Full-screen interactive manual page and documentation reader |
+=======
 dismasmOS provides 23 native commands:
 
 | Command | Syntax Signature | Operational Semantics |
 | :--- | :--- | :--- |
+>>>>>>> 4e4e01247f9384c7049a1030c1bf3ee712054a31
 | `help` | `help` | Displays command summary and usage |
 | `clear` | `clear` | Blanks the 80x25 VGA screen and resets cursor |
 | `echo` | `echo [text] [> file]` | Prints text or redirects output into a file |
@@ -289,8 +306,15 @@ dismasmOS provides 23 native commands:
 | `cat` | `cat <filename>` | Streams the raw contents of a file to stdout |
 | `grep` | `grep <pattern> <file>` | Searches for text patterns within a file |
 | `touch` | `touch <filename>` | Creates an empty file node in the filesystem |
+<<<<<<< HEAD
+| `pr` | `pr [live\|start\|kill]` | Continuous live hardware monitor (ESC/q to exit) or process control |
+| `toc` | `toc` | Lists files in ATA LBA28 Table of Contents (Block/Extent filesystem) |
+| `atasave` | `atasave <name> <data>` | Writes extent to ATA disk using raw PIO `rep outsw` |
+| `ataload` | `ataload <name>` | Loads extent from ATA disk using raw PIO `rep insw` |
+=======
 | `rm` | `rm <filename>` | Removes a file or directory node from the filesystem |
 | `pr` | `pr [start\|kill\|status]` | Process management subsystem and daemon status |
+>>>>>>> 4e4e01247f9384c7049a1030c1bf3ee712054a31
 | `uname` | `uname` | Prints operating system name, release, and machine target |
 | `MemRep` | `MemRep` | Comprehensive memory report including kernel and heap stats |
 | `lang` | `lang <de\|en>` | Switches active keyboard layout between QWERTZ and QWERTY |

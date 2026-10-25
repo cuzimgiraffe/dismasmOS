@@ -6,6 +6,8 @@
 #include "kbd.h"
 #include "mouse.h"
 #include "fs.h"
+#include "ata.h"
+#include "ntfs.h"
 #include "proc.h"
 #include "shell.h"
 #include "heap.h"
@@ -73,6 +75,13 @@ void kmain(void) {
 
     fs_init();
     log_kmsg("    0.000085", "vfs: In-memory filesystem mounted at / (type ramfs)");
+
+    if (storage_init() == 0) {
+        if (ntfs_automount() == 0) {
+            fs_mount_ntfs();
+            log_ok("Mounted Persistent NTFS Volume at /ntfs (Linux UUID/LABEL bound).");
+        }
+    }
 
     proc_init();
     log_kmsg("    0.000095", "proc: Process management active, agent service.prf loaded");
