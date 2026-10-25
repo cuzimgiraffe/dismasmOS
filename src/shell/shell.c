@@ -11,10 +11,13 @@ const char *SYSTEM_BUILD   = "VF001.04.0.2026";
 #include "em.h"
 #include "heap.h"
 #include "wdid.h"
+<<<<<<< HEAD
 #include "fs_ata.h"
 #include "ata.h"
 #include "ntfs.h"
 #include "pr_mon.h"
+=======
+>>>>>>> 178f31192094617df49250bf3c3a2f8dcf53aaf3
 
 
 #define CMD_MAX_LEN 128
@@ -765,6 +768,7 @@ static int cmd_heap(int argc, char **argv) {
 
 static void cmd_help(void) {
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+<<<<<<< HEAD
     vga_puts("dismasmOS 1.4 Available Commands:\n");
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     vga_puts("  wdid       - manual reader like linux man (wdid <cmd>, scroll: wheel/pgup/pgdn)\n");
@@ -803,6 +807,36 @@ static void cmd_help(void) {
     vga_puts("  shutdown   - power off / halt system via hardware assembly\n");
     vga_puts("  reboot     - reboot machine\n");
     vga_puts("  &&         - chain multiple commands sequentially\n");
+=======
+    vga_puts("dismasmOS 1.4 Available Commands (24):\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_puts("  wdid      - manual reader like linux man (wdid <cmd>, scroll: wheel/pgup/pgdn)\n");
+    vga_puts("  help      - display available commands\n");
+    vga_puts("  clear     - clear console screen\n");
+    vga_puts("  colr      - display 16-color 1-bit spot for color (colr (farbe))\n");
+    vga_puts("  heap      - kernel heap allocator status & self-test (heap test)\n");
+    vga_puts("  calc      - integer arithmetic calculator (calc 10 + 5 * 2)\n");
+    vga_puts("  dump      - memory hex and ascii dump (dump 0x1000 64)\n");
+    vga_puts("  reg       - display cpu 64-bit and control registers\n");
+    vga_puts("  asm       - execute raw machine code or opcode mnemonic\n");
+    vga_puts("  lsf       - list files and dirs (flags: -s size in KiB & hex, -p perms)\n");
+    vga_puts("  cd        - change working directory\n");
+    vga_puts("  makedir   - create a new directory\n");
+    vga_puts("  changes   - view filesystem access and modification audit log\n");
+    vga_puts("  em        - vi-style text editor (Alt for commands: ;wsc, ;q, ;s, ;-m)\n");
+    vga_puts("  cat       - display file content\n");
+    vga_puts("  echo      - print or redirect text into file (> file)\n");
+    vga_puts("  touch     - create empty file\n");
+    vga_puts("  rm        - remove file or directory\n");
+    vga_puts("  grep      - search pattern in file\n");
+    vga_puts("  pr        - process management (start, kill, -c, status)\n");
+    vga_puts("  uname     - system information\n");
+    vga_puts("  MemRep    - memory allocation report\n");
+    vga_puts("  lang      - switch keyboard layout (de / en)\n");
+    vga_puts("  shutdown  - power off / halt system via hardware assembly\n");
+    vga_puts("  reboot    - reboot machine\n");
+    vga_puts("  &&        - chain multiple commands sequentially\n");
+>>>>>>> 178f31192094617df49250bf3c3a2f8dcf53aaf3
 }
 
 

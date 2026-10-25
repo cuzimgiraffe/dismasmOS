@@ -416,6 +416,7 @@ const struct wdid_entry wdid_doc_grep = {
     "grep", "find", "Search for text patterns line-by-line within a file",
     doc_grep_lines, sizeof(doc_grep_lines) / sizeof(doc_grep_lines[0])
 };
+<<<<<<< HEAD
 
 /* 11. BLKID MANUAL ENTRY */
 static const char * const doc_blkid_lines[] = {
@@ -498,3 +499,5 @@ const struct wdid_entry wdid_doc_ntfsformat = {
     "ntfsformat", "mkfs.ntfs", "Format an ATA drive as NTFS 3.1 (ntfsformat [/dev/sdX])",
     doc_ntfsformat_lines, sizeof(doc_ntfsformat_lines) / sizeof(doc_ntfsformat_lines[0])
 };
+=======
+>>>>>>> 178f31192094617df49250bf3c3a2f8dcf53aaf3
