@@ -27,6 +27,9 @@ extern const struct wdid_entry wdid_doc_echo;
 extern const struct wdid_entry wdid_doc_touch;
 extern const struct wdid_entry wdid_doc_rm;
 extern const struct wdid_entry wdid_doc_grep;
+extern const struct wdid_entry wdid_doc_blkid;
+extern const struct wdid_entry wdid_doc_ntfsinfo;
+extern const struct wdid_entry wdid_doc_ntfsformat;
 
 /* Operator && manual entry */
 static const char * const doc_chain_lines[] = {
@@ -89,6 +92,9 @@ const struct wdid_entry * const wdid_entries[] = {
     &wdid_doc_touch,
     &wdid_doc_rm,
     &wdid_doc_grep,
+    &wdid_doc_blkid,
+    &wdid_doc_ntfsinfo,
+    &wdid_doc_ntfsformat,
     &wdid_doc_chain
 };
 

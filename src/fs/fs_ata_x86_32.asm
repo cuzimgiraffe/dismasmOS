@@ -1,14 +1,14 @@
 ; ==============================================================================
-; dismasmOS / Bare-Metal x86 - Reines 32-Bit Protected Mode Dateisystem
+; dismasmOS / Bare-Metal x86 - Pure 32-Bit Protected Mode Filesystem
 ; ==============================================================================
-; Spezifikation:
-; - Architektur: x86 (IA-32, 32-Bit Protected Mode)
-; - Rohe ATA-PIO-Ports (0x1F0-0x1F7) im LBA28-Modus
-; - Minimale Table of Contents (ToC) in Sektor 0:
-;   * Feste 16-Byte-Eintraege: 8 Bytes Name, 4 Bytes Start-LBA, 4 Bytes Groesse
-;   * 32 Eintraege max (512 Bytes / 16 Bytes = 32)
-; - Keine dynamische Heap-Nutzung, feste statische Puffer im BSS
-; - Optimierte String-Instruktionen: 'rep insw', 'rep outsw', 'cld', 'stosw'
+; Specification:
+; - Architecture: x86 (IA-32, 32-Bit Protected Mode)
+; - Raw ATA-PIO ports (0x1F0-0x1F7) in LBA28 mode
+; - Minimal Table of Contents (ToC) in Sector 0:
+;   * Fixed 16-byte entries: 8-byte name, 4-byte start LBA, 4-byte byte size
+;   * 32 entries maximum (512 bytes / 16 bytes = 32)
+; - No dynamic heap usage, fixed static buffers in BSS
+; - Optimized string instructions: 'rep insw', 'rep outsw', 'cld', 'stosw'
 ; ==============================================================================
 
 [BITS 32]
@@ -39,7 +39,7 @@ ATA_SR_DF           equ 0x20
 ATA_SR_DRQ          equ 0x08
 ATA_SR_ERR          equ 0x01
 
-; ToC Spezifikation
+; ToC Specification
 TOC_ENTRY_SIZE      equ 16
 TOC_MAX_ENTRIES     equ 32
 
@@ -47,12 +47,12 @@ section .data
 align 4
 str_toc_hdr_32:
     db "================================================================================", 10
-    db " [ATA ToC] Sektor 0 LBA28 Block/Extent Dateisystem (x86 32-Bit PM)", 10
+    db " [ATA ToC] Sector 0 LBA28 Block/Extent Filesystem (x86 32-Bit PM)", 10
     db "================================================================================", 10
-    db " IDX  DATEINAME   START-LBA   GROESSE (BYTE)  SEKTOREN   BEREICH", 10
+    db " IDX  FILENAME    START-LBA   SIZE (BYTES)    SECTORS    RANGE", 10
     db "--------------------------------------------------------------------------------", 10, 0
 str_toc_empty_32:
-    db "  (Keine Dateien vorhanden. Table of Contents ist leer.)", 10, 0
+    db "  (No files found. Table of Contents is empty.)", 10, 0
 str_toc_foot_32:
     db "--------------------------------------------------------------------------------", 10, 0
 str_nl_32:
@@ -64,11 +64,11 @@ global toc_buffer_32
 global last_io_lba_32
 global last_ata_status_32
 
-; Feste statische Puffer im BSS - Keine dynamische Heap-Allozierung!
-toc_buffer_32:      resb 512    ; 1 Sektor fuer Table of Contents
-last_io_lba_32:     resd 1      ; Letzter zugegriffener LBA28-Sektor
-last_ata_status_32: resb 1      ; Zuletzt von Port 0x1F7 gelesenes Status-Byte
-num_buf_32:         resb 16     ; Scratch-Puffer fuer Zahlenausgabe
+; Fixed static buffers in BSS - zero dynamic heap allocation!
+toc_buffer_32:      resb 512    ; 1 sector for Table of Contents
+last_io_lba_32:     resd 1      ; Last accessed LBA28 sector
+last_ata_status_32: resb 1      ; Last status byte read from port 0x1F7
+num_buf_32:         resb 16     ; Scratch buffer for numeric output
 
 section .text
 
@@ -85,7 +85,7 @@ extern vga_putchar
 extern vga_set_color
 
 ; ==============================================================================
-; ata_400ns_delay_32: 4x Lesen des Statusports erzeugt standardkonforme 400ns Pause
+; ata_400ns_delay_32: Reading status port 4 times produces a standard 400ns delay
 ; ==============================================================================
 ata_400ns_delay_32:
     mov dx, ATA_PORT_STATUS
@@ -96,7 +96,7 @@ ata_400ns_delay_32:
     ret
 
 ; ==============================================================================
-; ata_wait_bsy_32: Status-Polling - Warte bis BSY (Bit 7) geloescht ist
+; ata_wait_bsy_32: Status polling - wait until BSY (bit 7) is clear
 ; ==============================================================================
 ata_wait_bsy_32:
     mov dx, ATA_PORT_STATUS
@@ -118,7 +118,7 @@ ata_wait_bsy_32:
     ret
 
 ; ==============================================================================
-; ata_wait_drq_32: Status-Polling - Warte bis DRQ (Bit 3) gesetzt und kein ERR
+; ata_wait_drq_32: Status polling - wait until DRQ (bit 3) is set & no ERR
 ; ==============================================================================
 ata_wait_drq_32:
     mov dx, ATA_PORT_STATUS
@@ -141,7 +141,7 @@ ata_wait_drq_32:
 
 ; ==============================================================================
 ; ata_read_sectors_32:
-; Liest fortlaufende Sektoren via 'rep insw' im x86 32-Bit cdecl Aufrufmodell
+; Reads contiguous sectors via 'rep insw' using x86 32-bit cdecl calling model
 ; Stack: [ebp+8]  = uint32_t lba
 ;        [ebp+12] = uint8_t  count
 ;        [ebp+16] = void    *buffer
@@ -153,11 +153,11 @@ ata_read_sectors_32:
     push esi
     push edi
 
-    mov ebx, [ebp + 8]          ; EBX = Start-LBA
-    movzx ecx, byte [ebp + 12]  ; ECX = Sektoranzahl
+    mov ebx, [ebp + 8]          ; EBX = start LBA
+    movzx ecx, byte [ebp + 12]  ; ECX = sector count
     test ecx, ecx
     jz .read_done_32
-    mov edi, [ebp + 16]         ; EDI = RAM-Zielpuffer
+    mov edi, [ebp + 16]         ; EDI = RAM destination buffer
 
 .sector_loop_rd:
     mov [last_io_lba_32], ebx
@@ -166,7 +166,7 @@ ata_read_sectors_32:
     test eax, eax
     jnz .read_fail_32
 
-    ; Master Drive | LBA Bits 24..27
+    ; Master Drive | LBA bits 24..27
     mov eax, ebx
     shr eax, 24
     and al, 0x0F
@@ -179,7 +179,7 @@ ata_read_sectors_32:
     test eax, eax
     jnz .read_fail_32
 
-    ; Sektoranzahl = 1
+    ; Sector count = 1
     mov al, 1
     mov dx, ATA_PORT_SECCOUNT
     out dx, al
@@ -211,12 +211,12 @@ ata_read_sectors_32:
     test eax, eax
     jnz .read_fail_32
 
-    ; 256 Words via 'rep insw' einlesen
+    ; Read 256 words via 'rep insw'
     push ecx
     mov dx, ATA_PORT_DATA
     mov ecx, 256
     cld
-    rep insw                    ; EDI wird automatisch um 512 Bytes inkrementiert
+    rep insw                    ; EDI automatically incremented by 512 bytes
     pop ecx
 
     inc ebx
@@ -241,7 +241,7 @@ ata_read_sectors_32:
 
 ; ==============================================================================
 ; ata_write_sectors_32:
-; Schreibt fortlaufende Sektoren via 'rep outsw' im x86 32-Bit cdecl Aufrufmodell
+; Writes contiguous sectors via 'rep outsw' using x86 32-bit cdecl calling model
 ; Stack: [ebp+8]  = uint32_t lba
 ;        [ebp+12] = uint8_t  count
 ;        [ebp+16] = const void *buffer
@@ -253,11 +253,11 @@ ata_write_sectors_32:
     push esi
     push edi
 
-    mov ebx, [ebp + 8]          ; EBX = Start-LBA
-    movzx ecx, byte [ebp + 12]  ; ECX = Sektoranzahl
+    mov ebx, [ebp + 8]          ; EBX = start LBA
+    movzx ecx, byte [ebp + 12]  ; ECX = sector count
     test ecx, ecx
     jz .write_done_32
-    mov esi, [ebp + 16]         ; ESI = RAM-Quellpuffer
+    mov esi, [ebp + 16]         ; ESI = RAM source buffer
 
 .sector_loop_wr:
     mov [last_io_lba_32], ebx
@@ -266,7 +266,7 @@ ata_write_sectors_32:
     test eax, eax
     jnz .write_fail_32
 
-    ; Master Drive | LBA Bits 24..27
+    ; Master Drive | LBA bits 24..27
     mov eax, ebx
     shr eax, 24
     and al, 0x0F
@@ -279,7 +279,7 @@ ata_write_sectors_32:
     test eax, eax
     jnz .write_fail_32
 
-    ; Sektoranzahl = 1
+    ; Sector count = 1
     mov al, 1
     mov dx, ATA_PORT_SECCOUNT
     out dx, al
@@ -311,12 +311,12 @@ ata_write_sectors_32:
     test eax, eax
     jnz .write_fail_32
 
-    ; 256 Words via 'rep outsw' schreiben
+    ; Write 256 words via 'rep outsw'
     push ecx
     mov dx, ATA_PORT_DATA
     mov ecx, 256
     cld
-    rep outsw                   ; ESI wird automatisch um 512 Bytes inkrementiert
+    rep outsw                   ; ESI automatically incremented by 512 bytes
     pop ecx
 
     call ata_wait_bsy_32
@@ -327,7 +327,7 @@ ata_write_sectors_32:
     dec ecx
     jnz .sector_loop_wr
 
-    ; Flush Cache
+    ; Flush cache
     mov al, ATA_CMD_CACHE_FLUSH
     mov dx, ATA_PORT_COMMAND
     out dx, al
@@ -352,7 +352,7 @@ ata_write_sectors_32:
 
 ; ==============================================================================
 ; fs_ata_save_file_32:
-; Speichert Datei auf ATA-Sektoren und aktualisiert ToC in Sektor 0.
+; Saves file to ATA sectors and updates ToC in Sector 0.
 ; Stack: [ebp+8]  = const char *name8
 ;        [ebp+12] = const void *data
 ;        [ebp+16] = uint32_t size
@@ -364,11 +364,11 @@ fs_ata_save_file_32:
     push esi
     push edi
 
-    mov edx, [ebp + 16]         ; EDX = Groesse
+    mov edx, [ebp + 16]         ; EDX = byte size
     test edx, edx
     jz .save_err_32
 
-    ; 1. ToC (Sektor 0) einlesen
+    ; 1. Read ToC (Sector 0)
     push toc_buffer_32
     push 1
     push 0
@@ -377,17 +377,17 @@ fs_ata_save_file_32:
     test eax, eax
     jnz .save_err_32
 
-    ; 2. Sektoren berechnen: (size + 511) / 512
+    ; 2. Compute sector count: (size + 511) / 512
     mov eax, [ebp + 16]
     add eax, 511
     shr eax, 9
-    mov edi, eax                ; EDI = Sektoranzahl
+    mov edi, eax                ; EDI = sector count
 
-    ; 3. Freien Slot oder passenden Eintrag suchen
+    ; 3. Find free slot or matching entry
     mov esi, toc_buffer_32
     xor ecx, ecx
-    mov edx, -1                 ; Freier Slot Index
-    mov ebx, 1                  ; Naechste freie LBA
+    mov edx, -1                 ; Free slot index
+    mov ebx, 1                  ; Next free LBA
 
 .scan_save_32:
     cmp byte [esi], 0
@@ -398,7 +398,7 @@ fs_ata_save_file_32:
     jmp .next_s_32
 
 .occ_32:
-    ; 8-Byte Namen vergleichen (2x Dwords in 32-Bit)
+    ; Compare 8-byte name (2x dwords in 32-bit mode)
     mov eax, [esi]
     mov edi, [ebp + 8]
     cmp eax, [edi]
@@ -425,41 +425,41 @@ fs_ata_save_file_32:
 
     cmp edx, -1
     je .save_err_32
-    ; Freien Slot konfigurieren
+    ; Configure free slot
     mov esi, toc_buffer_32
     shl edx, 4
     add esi, edx
     jmp .do_write_32
 
 .found_match_32:
-    mov ebx, [esi + 8]          ; Alte LBA weiterverwenden
+    mov ebx, [esi + 8]          ; Reuse existing LBA
 
 .do_write_32:
-    ; Sektoren berechnen
+    ; Compute sector count
     mov eax, [ebp + 16]
     add eax, 511
     shr eax, 9
 
-    ; Daten schreiben
-    push dword [ebp + 12]       ; Puffer
-    push eax                    ; Sektoren
-    push ebx                    ; Start-LBA
+    ; Write data sectors
+    push dword [ebp + 12]       ; Buffer
+    push eax                    ; Sectors
+    push ebx                    ; Start LBA
     call ata_write_sectors_32
     add esp, 12
     test eax, eax
     jnz .save_err_32
 
-    ; ToC-Eintrag fuellen
+    ; Populate ToC entry
     mov edi, [ebp + 8]
     mov eax, [edi]
     mov [esi], eax
     mov eax, [edi + 4]
     mov [esi + 4], eax
-    mov [esi + 8], ebx          ; Start-LBA
+    mov [esi + 8], ebx          ; Start LBA
     mov eax, [ebp + 16]
-    mov [esi + 12], eax         ; Groesse
+    mov [esi + 12], eax         ; Byte size
 
-    ; ToC (Sektor 0) zurueckschreiben
+    ; Write ToC (Sector 0) back to disk
     push toc_buffer_32
     push 1
     push 0
@@ -485,7 +485,7 @@ fs_ata_save_file_32:
 
 ; ==============================================================================
 ; fs_ata_load_file_32:
-; Laedt Datei anhand des Namens via 'rep insw' in den RAM.
+; Loads file by 8-byte name into RAM via 'rep insw'.
 ; Stack: [ebp+8]  = const char *name8
 ;        [ebp+12] = void *dest
 ; ==============================================================================
@@ -496,7 +496,7 @@ fs_ata_load_file_32:
     push esi
     push edi
 
-    ; 1. ToC einlesen
+    ; 1. Read ToC
     push toc_buffer_32
     push 1
     push 0
@@ -536,23 +536,23 @@ fs_ata_load_file_32:
 
 .match_load_32:
     mov ebx, [esi + 8]          ; LBA
-    mov edi, [esi + 12]         ; Groesse
+    mov edi, [esi + 12]         ; Byte size
 
     mov eax, edi
     add eax, 511
-    shr eax, 9                  ; Sektoren
+    shr eax, 9                  ; Sectors
 
-    push edi                    ; Groesse sichern
+    push edi                    ; Save size
     push dword [ebp + 12]       ; Dest
-    push eax                    ; Sektoranzahl
-    push ebx                    ; Start-LBA
+    push eax                    ; Sector count
+    push ebx                    ; Start LBA
     call ata_read_sectors_32
     add esp, 12
     pop edi
     test eax, eax
     jnz .load_err_32
 
-    mov eax, edi                ; Dateigroesse zurueckgeben
+    mov eax, edi                ; Return file size in bytes
     pop edi
     pop esi
     pop ebx
@@ -561,7 +561,7 @@ fs_ata_load_file_32:
 
 ; ==============================================================================
 ; fs_ata_list_toc_32:
-; CLI-Befehl fuer x86 32-Bit zum Auflisten aller Dateien im ToC
+; CLI routine for x86 32-bit mode to list all files in ToC
 ; ==============================================================================
 fs_ata_list_toc_32:
     push ebp
@@ -620,7 +620,7 @@ fs_ata_list_toc_32:
     call vga_putchar
     add esp, 8
 
-    ; Name ausgeben (8 Zeichen)
+    ; Print 8-character name
     xor ecx, ecx
 .pr_name_32:
     movzx eax, byte [esi + ecx]
@@ -651,7 +651,7 @@ fs_ata_list_toc_32:
     call vga_putchar
     add esp, 8
 
-    ; Groesse
+    ; Byte size
     mov eax, [esi + 12]
     call print_dec_32
 
@@ -673,7 +673,7 @@ fs_ata_list_toc_32:
     pop ebp
     ret
 
-; Hilfsfunktionen fuer 32-Bit
+; 32-bit helper functions
 print_hex32_32:
     push ebx
     mov edx, eax

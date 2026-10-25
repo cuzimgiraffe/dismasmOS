@@ -7,10 +7,10 @@
 extern "C" {
 #endif
 
-int ata_wait_bsy(void);
-int ata_wait_drq(void);
-int ata_read_sectors(uint32_t lba, uint8_t count, void *buffer);
-int ata_write_sectors(uint32_t lba, uint8_t count, const void *buffer);
+int ata_lba28_wait_bsy(void);
+int ata_lba28_wait_drq(void);
+int ata_lba28_read_sectors(uint32_t lba, uint8_t count, void *buffer);
+int ata_lba28_write_sectors(uint32_t lba, uint8_t count, const void *buffer);
 
 int fs_ata_save_file(const char *name8, const void *data, uint32_t size);
 int fs_ata_load_file(const char *name8, void *dest);

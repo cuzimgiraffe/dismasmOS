@@ -1,18 +1,18 @@
 ; ==============================================================================
-; dismasmOS - Dynamischer Live-Monitoring-Befehl ('pr')
+; dismasmOS - Dynamic Live Hardware Monitoring Command ('pr')
 ; ==============================================================================
-; Spezifikation:
-; - Kontinuierliche Aktualisierung in einer Schleife bis ESC (0x01) oder 'q' (0x10)
-;   Abfrage ueber Tastatur-Ports 0x60 (Daten) und 0x64 (Status)
-; - Direktes Schreiben in den VGA-Textspeicher (0xB8000) -> Flackerfrei, kein String-Overhead
-; - Echte dynamische Hardware-Werte:
-;   * RTC-Uhrzeit live aus CMOS-Ports 0x70/0x71 mit BCD-Konvertierung
-;   * PIT-Ticks und TSC-Differenz zur Takt-/Laufzeitmessung (rdtsc, PIT 0x40)
-;   * Registerwerte (EAX, EBX, ESP, CR0, CR3, EFLAGS)
-;   * ATA-Status-Register (Port 0x1F7: BSY, DRDY, ERR) und letzter I/O-LBA-Sektor
-;   * Letzter roher Tastatur-Scancode (Port 0x60)
-; - Maximal zyklen- und speicheroptimiert (stosw, lodsb, rep stosw, minimale Spruenge)
-; - Automatische Unterstuetzung fuer ELF32 (x86 32-Bit) und ELF64 (x86_64)
+; Specification:
+; - Continuous refresh loop until ESC (0x01) or 'q' (0x10)
+;   polled directly via PS/2 ports 0x60 (Data) and 0x64 (Status)
+; - Direct writes to VGA text buffer (0xB8000) -> flicker-free, zero string overhead
+; - Live dynamic hardware telemetry:
+;   * RTC clock read live from CMOS ports 0x70/0x71 with BCD conversion
+;   * PIT ticks and TSC delta for cycle/runtime measurement (rdtsc, PIT 0x40)
+;   * Register snapshots & live control registers (EAX, EBX, ESP, CR0, CR3, EFLAGS)
+;   * ATA status register (port 0x1F7: BSY, DRDY, ERR) and last I/O LBA sector
+;   * Last raw keyboard scancode (port 0x60)
+; - Cycle- and memory-optimized (stosw, lodsb, rep stosw, minimal branches)
+; - Automatic support for ELF32 (x86 32-bit) and ELF64 (x86_64)
 ; ==============================================================================
 
 %ifidn __OUTPUT_FORMAT__, elf32
@@ -42,18 +42,18 @@ VGA_BASE            equ 0xB8000
 VGA_COLS            equ 80
 VGA_ROWS            equ 25
 
-; Farb-Attribute (Hintergrund | Vordergrund)
-ATTR_HEADER         equ 0x1F    ; Weiss auf Blau
-ATTR_DIVIDER        equ 0x03    ; Dunkelcyan auf Schwarz
-ATTR_LABEL          equ 0x0B    ; Hellcyan auf Schwarz
-ATTR_TEXT           equ 0x07    ; Hellgrau auf Schwarz
-ATTR_VAL_WHITE      equ 0x0F    ; Weiss (intensiv)
-ATTR_VAL_YELLOW     equ 0x0E    ; Gelb
-ATTR_VAL_GREEN      equ 0x0A    ; Hellgruen
-ATTR_VAL_RED        equ 0x0C    ; Hellrot
-ATTR_FOOTER         equ 0x2F    ; Weiss auf Gruen
+; Color attributes (background | foreground)
+ATTR_HEADER         equ 0x1F    ; White on Blue
+ATTR_DIVIDER        equ 0x03    ; Cyan on Black
+ATTR_LABEL          equ 0x0B    ; Light Cyan on Black
+ATTR_TEXT           equ 0x07    ; Light Grey on Black
+ATTR_VAL_WHITE      equ 0x0F    ; Bright White
+ATTR_VAL_YELLOW     equ 0x0E    ; Yellow
+ATTR_VAL_GREEN      equ 0x0A    ; Light Green
+ATTR_VAL_RED        equ 0x0C    ; Light Red
+ATTR_FOOTER         equ 0x2F    ; White on Green
 
-; Hardware-Ports
+; Hardware ports
 PORT_KBD_DATA       equ 0x60
 PORT_KBD_STATUS     equ 0x64
 PORT_RTC_INDEX      equ 0x70
@@ -66,7 +66,7 @@ section .bss
 align 16
 global prev_tsc_low
 
-; Statische BSS-Variablen (kein Heap!)
+; Static BSS variables (zero heap usage!)
 prev_tsc_low:       resd 1
 snap_eax:           resd 1
 snap_ebx:           resd 1
@@ -78,23 +78,23 @@ snap_pit:           resw 1
 last_scancode_pr:   resb 1
 status_64_pr:       resb 1
 
-; Externe BSS-Variablen aus dem ATA-Dateisystem
+; External BSS variables from ATA filesystem module
 extern last_io_lba
 extern last_ata_status
 
 section .data
 align 4
 str_banner:
-    db " [dismasmOS] BARE-METAL LIVE HARDWARE MONITOR ('pr') | [ESC] / [q] Beenden ", 0
+    db " [dismasmOS] BARE-METAL LIVE HARDWARE MONITOR ('pr') | [ESC] / [q] Quit ", 0
 str_div:
     times 80 db 0xCD
     db 0
 str_sec_rtc:
-    db " [CMOS RTC]      Uhrzeit:       ", 0
+    db " [CMOS RTC]      Current Time: ", 0
 str_rtc_note:
-    db " (Ports 0x70/0x71, BCD-dekodiert)", 0
+    db " (Ports 0x70/0x71, BCD-decoded)", 0
 str_sec_cpu:
-    db " [CPU TIMING]    TSC-Zaehler:   0x", 0
+    db " [CPU TIMING]    TSC Counter:  0x", 0
 str_sec_delta:
     db "  Delta/Frame: 0x", 0
 str_sec_pit:
@@ -122,25 +122,25 @@ str_sec_ata_err:
 str_bracket_close:
     db "]", 0
 str_sec_lba:
-    db "  Letzter I/O Sektor (LBA): 0x", 0
+    db " [ATA LAST LBA]  Last I/O Sector (LBA):  0x", 0
 str_sec_kbd1:
     db " [KEYBOARD I/O]  Port 0x60 Scancode: 0x", 0
 str_sec_kbd2:
     db "  Status Port 0x64: 0x", 0
 str_info_title:
-    db " [ARCHITEKTUR & LEISTUNGSMERKMALE]", 0
+    db " [ARCHITECTURE & PERFORMANCE FEATURES]", 0
 str_info_1:
-    db " * Direkter VGA-Schreibzugriff auf 0x000B8000 (Vollstaendig flackerfrei)", 0
+    db " * Direct VGA VRAM writes to 0x000B8000 (completely flicker-free)", 0
 str_info_2:
-    db " * Maximal optimierte String-Befehle: stosw, lodsb, rep stosw", 0
+    db " * Cycle-optimized string instructions: stosw, lodsb, rep stosw", 0
 str_info_3:
-    db " * RTC-Uhrzeit mit UIP-Synchronisation und hardwarenaher BCD-Wandlung", 0
+    db " * Live CMOS RTC clock with UIP synchronization and hardware BCD decode", 0
 str_info_4:
-    db " * Hochpraezise Taktmessung via CPU RDTSC und PIT-Zaehler Ch0", 0
+    db " * High-precision cycle timing via CPU RDTSC and PIT Counter Ch0", 0
 str_info_5:
-    db " * Rohe Abfrage der Controller-Ports 0x1F7 (ATA) und 0x60/0x64 (PS/2)", 0
+    db " * Raw hardware polling on ports 0x1F7 (ATA) and 0x60/0x64 (PS/2)", 0
 str_footer:
-    db " LIVE REFRESH AKTIV | Zyklenoptimierte Endlosschleife | Druecke 'q' oder ESC zum Beenden", 0
+    db " LIVE REFRESH ACTIVE | Cycle-Optimized Loop | Press 'q' or ESC to exit ", 0
 
 section .text
 global pr_monitor_loop
@@ -150,8 +150,8 @@ extern vga_update_cursor
 
 ; ==============================================================================
 ; pr_monitor_loop:
-; Haupteinsprungpunkt des dynamischen 'pr'-Live-Monitors.
-; Fuehrt eine kontinuierliche Aktualisierungsschleife aus, bis ESC oder 'q' gedrueckt wird.
+; Main entry point of the dynamic 'pr' live hardware monitor.
+; Runs a continuous refresh loop until ESC or 'q' is pressed.
 ; ==============================================================================
 pr_monitor_loop:
 %ifidn __OUTPUT_FORMAT__, elf32
@@ -168,12 +168,12 @@ pr_monitor_loop:
     push r15
 %endif
 
-    ; 1. Initiale Register-Snapshots sichern (EAX, EBX, ESP)
+    ; 1. Save initial register snapshots (EAX, EBX, ESP)
     mov [snap_eax], eax
     mov [snap_ebx], ebx
     mov [snap_esp], esp
 
-    ; Cursor in Ecke setzen
+    ; Move cursor to top-left corner
 %ifidn __OUTPUT_FORMAT__, elf32
     push 0
     push 0
@@ -185,14 +185,14 @@ pr_monitor_loop:
     call vga_update_cursor
 %endif
 
-    ; 2. Statisches Layout direkt in den VGA-Puffer (0xB8000) schreiben
+    ; 2. Render static layout directly into VGA buffer (0xB8000)
     call render_static_layout
 
-    ; 3. Initialer TSC-Wert
+    ; 3. Capture initial TSC baseline
     rdtsc
     mov [prev_tsc_low], eax
 
-    ; 4. Tastaturpuffer leeren vor Eintritt in die Live-Schleife
+    ; 4. Drain PS/2 keyboard output buffer before entering live loop
 .drain_kbd_init:
     in al, PORT_KBD_STATUS
     test al, 0x01
@@ -201,40 +201,40 @@ pr_monitor_loop:
     jmp .drain_kbd_init
 .kbd_ready:
 
-    ; Interrupts temporaer maskieren waehrend des Live-Hardware-Pollings
+    ; Temporarily mask interrupts during bare-metal live hardware polling
     cli
 
 ; ==============================================================================
-; LIVE-SCHLEIFE (Kontinuierliche Aktualisierung ohne Flackern)
+; LIVE LOOP (Continuous flicker-free refresh)
 ; ==============================================================================
 .live_loop:
 
     ; --------------------------------------------------------------------------
-    ; A. Tastatur-Polling ueber Port 0x64 und Port 0x60
+    ; A. Keyboard polling via port 0x64 and port 0x60
     ; --------------------------------------------------------------------------
     in al, PORT_KBD_STATUS
     mov [status_64_pr], al
     test al, 0x01               ; Bit 0 = Output Buffer Full?
     jz .no_key_pressed
 
-    ; Scancode von Port 0x60 lesen
+    ; Read scancode from port 0x60
     in al, PORT_KBD_DATA
     mov [last_scancode_pr], al
 
-    ; Abbruchbedingung pruefen:
+    ; Check exit keys:
     ; 0x01 = ESC (Make Code)
     cmp al, 0x01
     je .exit_monitor
-    ; 0x10 = 'q' (Make Code im Set 1)
+    ; 0x10 = 'q' (Make Code in Set 1)
     cmp al, 0x10
     je .exit_monitor
 
 .no_key_pressed:
 
     ; --------------------------------------------------------------------------
-    ; B. RTC-Uhrzeit live aus CMOS-Ports 0x70/0x71 (mit BCD-Konvertierung)
+    ; B. Live RTC clock from CMOS ports 0x70/0x71 (with BCD conversion)
     ; --------------------------------------------------------------------------
-    ; UIP (Update In Progress, Bit 7 von Register 0x0A) abwarten
+    ; Wait while UIP (Update In Progress, bit 7 of register 0x0A) is set
 .wait_uip:
     mov al, 0x0A
     out PORT_RTC_INDEX, al
@@ -242,29 +242,29 @@ pr_monitor_loop:
     test al, 0x80
     jnz .wait_uip
 
-    ; Stunden lesen (Register 0x04)
+    ; Read Hours (register 0x04)
     mov al, 0x04
     out PORT_RTC_INDEX, al
     in al, PORT_RTC_DATA
-    mov cl, al                  ; CL = Stunden
+    mov cl, al                  ; CL = Hours
 
-    ; Minuten lesen (Register 0x02)
+    ; Read Minutes (register 0x02)
     mov al, 0x02
     out PORT_RTC_INDEX, al
     in al, PORT_RTC_DATA
-    mov ch, al                  ; CH = Minuten
+    mov ch, al                  ; CH = Minutes
 
-    ; Sekunden lesen (Register 0x00)
+    ; Read Seconds (register 0x00)
     mov al, 0x00
     out PORT_RTC_INDEX, al
     in al, PORT_RTC_DATA
-    mov dl, al                  ; DL = Sekunden
+    mov dl, al                  ; DL = Seconds
 
-    ; RTC live in VGA-Textspeicher an Zeile 2, Spalte 33 schreiben
+    ; Write live RTC to VGA text buffer at Row 2, Column 33
     mov REG_DI, VGA_BASE + (2 * 80 + 33) * 2
     mov ah, ATTR_VAL_YELLOW
 
-    ; Stunden BCD -> ASCII
+    ; Hours BCD -> ASCII
     mov al, cl
     shr al, 4
     add al, '0'
@@ -274,11 +274,11 @@ pr_monitor_loop:
     add al, '0'
     stosw
 
-    ; Doppelpunkt
+    ; Colon
     mov al, ':'
     stosw
 
-    ; Minuten BCD -> ASCII
+    ; Minutes BCD -> ASCII
     mov al, ch
     shr al, 4
     add al, '0'
@@ -288,11 +288,11 @@ pr_monitor_loop:
     add al, '0'
     stosw
 
-    ; Doppelpunkt
+    ; Colon
     mov al, ':'
     stosw
 
-    ; Sekunden BCD -> ASCII
+    ; Seconds BCD -> ASCII
     mov al, dl
     shr al, 4
     add al, '0'
@@ -303,44 +303,44 @@ pr_monitor_loop:
     stosw
 
     ; --------------------------------------------------------------------------
-    ; C. PIT-Ticks und TSC-Differenz zur Takt-/Laufzeitmessung
+    ; C. PIT ticks and TSC delta for cycle/runtime measurement
     ; --------------------------------------------------------------------------
-    ; PIT-Zaehler Channel 0 live latchen und auslesen
+    ; Latch and read PIT Channel 0 counter live
     mov al, 0x00                ; Latch Counter 0
     out PORT_PIT_CMD, al
-    in al, PORT_PIT_CH0         ; Low Byte
+    in al, PORT_PIT_CH0         ; Low byte
     mov bl, al
-    in al, PORT_PIT_CH0         ; High Byte
+    in al, PORT_PIT_CH0         ; High byte
     mov bh, al
     mov [snap_pit], bx
 
-    ; RDTSC ausfuehren: Liefert 64-Bit Taktzyklen in EDX:EAX
+    ; Execute RDTSC: returns 64-bit cycle counter in EDX:EAX
     rdtsc
-    mov ecx, eax                ; Aktueller TSC Low
+    mov ecx, eax                ; Current TSC low
     mov ebx, eax
-    sub ebx, [prev_tsc_low]     ; Delta = Aktuell - Vorherig
+    sub ebx, [prev_tsc_low]     ; Delta = Current - Previous
     mov [prev_tsc_low], ecx
 
-    ; TSC 64-Bit in VGA schreiben: Zeile 3, Spalte 35
+    ; Write 64-bit TSC to VGA: Row 3, Column 35
     mov REG_DI, VGA_BASE + (3 * 80 + 35) * 2
     push REG_CX
     mov ch, ATTR_VAL_WHITE
-    mov eax, edx                ; TSC High 32-Bit
+    mov eax, edx                ; TSC high 32 bits
     call write_hex32_vga
-    pop REG_AX                  ; TSC Low 32-Bit
+    pop REG_AX                  ; TSC low 32 bits
     mov ch, ATTR_VAL_WHITE
     call write_hex32_vga
 
-    ; TSC Delta in VGA schreiben: Zeile 3, Spalte 68
+    ; Write TSC delta to VGA: Row 3, Column 68
     mov REG_DI, VGA_BASE + (3 * 80 + 68) * 2
     mov ch, ATTR_VAL_GREEN
     mov eax, ebx                ; Delta
     call write_hex32_vga
 
     ; --------------------------------------------------------------------------
-    ; D. Aktuelle Registerwerte (EAX, EBX, ESP, CR0, CR3, EFLAGS)
+    ; D. Current register values (EAX, EBX, ESP, CR0, CR3, EFLAGS)
     ; --------------------------------------------------------------------------
-    ; Live Control Register und Flags abfragen
+    ; Read live control registers and flags
 %ifidn __OUTPUT_FORMAT__, elf32
     mov eax, cr0
     mov [snap_cr0], eax
@@ -359,7 +359,7 @@ pr_monitor_loop:
     mov [snap_eflags], eax
 %endif
 
-    ; Zeile 5: EAX (Spalte 26), EBX (Spalte 45), ESP (Spalte 64)
+    ; Row 5: EAX (Col 26), EBX (Col 45), ESP (Col 64)
     mov REG_DI, VGA_BASE + (5 * 80 + 26) * 2
     mov ch, ATTR_VAL_WHITE
     mov eax, [snap_eax]
@@ -375,7 +375,7 @@ pr_monitor_loop:
     mov eax, [snap_esp]
     call write_hex32_vga
 
-    ; Zeile 6: CR0 (Spalte 26), CR3 (Spalte 45), EFLAGS (Spalte 64)
+    ; Row 6: CR0 (Col 26), CR3 (Col 45), EFLAGS (Col 64)
     mov REG_DI, VGA_BASE + (6 * 80 + 26) * 2
     mov ch, ATTR_VAL_YELLOW
     mov eax, [snap_cr0]
@@ -392,21 +392,21 @@ pr_monitor_loop:
     call write_hex32_vga
 
     ; --------------------------------------------------------------------------
-    ; E. ATA-Status-Register (BSY, DRDY, ERR) und letzter I/O-Sektor
+    ; E. ATA status register (BSY, DRDY, ERR) and last I/O sector
     ; --------------------------------------------------------------------------
-    ; Port 0x1F7 live lesen
+    ; Read port 0x1F7 live
     mov dx, PORT_ATA_STATUS
     in al, dx
     mov [last_ata_status], al
-    mov cl, al                  ; CL = ATA Status Byte
+    mov cl, al                  ; CL = ATA status byte
 
-    ; Status Hex-Wert an Zeile 8, Spalte 35 ausgeben
+    ; Write status hex byte at Row 8, Column 35
     mov REG_DI, VGA_BASE + (8 * 80 + 35) * 2
     mov ch, ATTR_VAL_WHITE
     mov al, cl
     call write_hex8_vga
 
-    ; BSY (Bit 7): Zeile 8, Spalte 44
+    ; BSY (bit 7): Row 8, Column 44
     mov REG_DI, VGA_BASE + (8 * 80 + 44) * 2
     test cl, 0x80
     jz .bsy_0
@@ -417,7 +417,7 @@ pr_monitor_loop:
 .bsy_put:
     stosw
 
-    ; DRDY (Bit 6): Zeile 8, Spalte 52
+    ; DRDY (bit 6): Row 8, Column 52
     mov REG_DI, VGA_BASE + (8 * 80 + 52) * 2
     test cl, 0x40
     jz .drdy_0
@@ -428,7 +428,7 @@ pr_monitor_loop:
 .drdy_put:
     stosw
 
-    ; ERR (Bit 0): Zeile 8, Spalte 59
+    ; ERR (bit 0): Row 8, Column 59
     mov REG_DI, VGA_BASE + (8 * 80 + 59) * 2
     test cl, 0x01
     jz .err_0
@@ -439,29 +439,29 @@ pr_monitor_loop:
 .err_put:
     stosw
 
-    ; Letzter LBA28-Sektor: Zeile 9, Spalte 45
+    ; Last LBA28 sector: Row 9, Column 45
     mov REG_DI, VGA_BASE + (9 * 80 + 45) * 2
     mov ch, ATTR_VAL_WHITE
     mov eax, [last_io_lba]
     call write_hex32_vga
 
     ; --------------------------------------------------------------------------
-    ; F. Letzter roher Tastatur-Scancode (Port 0x60) und Status (Port 0x64)
+    ; F. Last raw keyboard scancode (port 0x60) and status (port 0x64)
     ; --------------------------------------------------------------------------
-    ; Scancode: Zeile 11, Spalte 41
+    ; Scancode: Row 11, Column 41
     mov REG_DI, VGA_BASE + (11 * 80 + 41) * 2
     mov ch, ATTR_VAL_YELLOW
     mov al, [last_scancode_pr]
     call write_hex8_vga
 
-    ; Status 0x64: Zeile 11, Spalte 65
+    ; Status 0x64: Row 11, Column 65
     mov REG_DI, VGA_BASE + (11 * 80 + 65) * 2
     mov ch, ATTR_VAL_WHITE
     mov al, [status_64_pr]
     call write_hex8_vga
 
     ; --------------------------------------------------------------------------
-    ; G. Kurze Verzoegerungsschleife fuer geschmeidige 30-60 Hz Bildwiederholung
+    ; G. Short spin delay for smooth 30-60 Hz refresh cadence
     ; --------------------------------------------------------------------------
     mov ecx, 150000
 .delay_spin:
@@ -469,17 +469,17 @@ pr_monitor_loop:
     dec ecx
     jnz .delay_spin
 
-    ; Naechster Schleifendurchlauf
+    ; Next iteration
     jmp .live_loop
 
 ; ==============================================================================
-; Beenden des Live-Monitors bei ESC oder 'q'
+; Exit live monitor on ESC or 'q'
 ; ==============================================================================
 .exit_monitor:
-    ; Interrupts wieder freigeben
+    ; Re-enable interrupts
     sti
 
-    ; Bildschirm saeubern und Cursor zuruecksetzen
+    ; Clear screen and reset cursor
     call vga_clear
 %ifidn __OUTPUT_FORMAT__, elf32
     push 0
@@ -505,18 +505,18 @@ pr_monitor_loop:
 
 ; ==============================================================================
 ; render_static_layout:
-; Schreibt das statische GUI-Gitter einmalig direkt in den VGA-Speicher (0xB8000)
-; Nutzt rep stosw und lodsb fuer hoechste Performance.
+; Writes the static UI grid once directly into VGA memory (0xB8000).
+; Uses rep stosw and lodsb for peak throughput.
 ; ==============================================================================
 render_static_layout:
-    ; 1. Ganzen Bildschirm auf Schwarz leeren
+    ; 1. Clear entire screen to black
     mov REG_DI, VGA_BASE
     mov ax, (ATTR_TEXT << 8) | ' '
     mov ecx, VGA_COLS * VGA_ROWS
     cld
     rep stosw
 
-    ; 2. Zeile 0: Titel-Banner (Weiss auf Blau)
+    ; 2. Row 0: Title banner (White on Blue)
     mov REG_DI, VGA_BASE
     mov ax, (ATTR_HEADER << 8) | ' '
     mov ecx, VGA_COLS
@@ -526,7 +526,7 @@ render_static_layout:
     lea REG_SI, [str_banner]
     call blit_str_vga
 
-    ; 3. Trennlinien: Zeile 1, 4, 7, 10, 12
+    ; 3. Divider lines: Rows 1, 4, 7, 10, 12
     mov REG_DI, VGA_BASE + (1 * 80 * 2)
     call blit_divider_line
     mov REG_DI, VGA_BASE + (4 * 80 * 2)
@@ -538,7 +538,7 @@ render_static_layout:
     mov REG_DI, VGA_BASE + (12 * 80 * 2)
     call blit_divider_line
 
-    ; 4. Zeile 2: RTC
+    ; 4. Row 2: RTC
     mov REG_DI, VGA_BASE + (2 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_sec_rtc]
@@ -548,7 +548,7 @@ render_static_layout:
     lea REG_SI, [str_rtc_note]
     call blit_str_vga
 
-    ; 5. Zeile 3: CPU Timing & TSC
+    ; 5. Row 3: CPU Timing & TSC
     mov REG_DI, VGA_BASE + (3 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_sec_cpu]
@@ -558,7 +558,7 @@ render_static_layout:
     lea REG_SI, [str_sec_delta]
     call blit_str_vga
 
-    ; 6. Zeile 5: CPU Register
+    ; 6. Row 5: CPU Registers
     mov REG_DI, VGA_BASE + (5 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_sec_reg1]
@@ -572,7 +572,7 @@ render_static_layout:
     lea REG_SI, [str_sec_reg3]
     call blit_str_vga
 
-    ; 7. Zeile 6: Control Register & Flags
+    ; 7. Row 6: Control Registers & Flags
     mov REG_DI, VGA_BASE + (6 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_sec_ctrl1]
@@ -586,7 +586,7 @@ render_static_layout:
     lea REG_SI, [str_sec_ctrl3]
     call blit_str_vga
 
-    ; 8. Zeile 8: ATA Status
+    ; 8. Row 8: ATA Status
     mov REG_DI, VGA_BASE + (8 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_sec_ata1]
@@ -608,13 +608,13 @@ render_static_layout:
     lea REG_SI, [str_bracket_close]
     call blit_str_vga
 
-    ; 9. Zeile 9: ATA Letzter I/O Sektor
+    ; 9. Row 9: ATA Last I/O Sector
     mov REG_DI, VGA_BASE + (9 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_sec_lba]
     call blit_str_vga
 
-    ; 10. Zeile 11: Keyboard I/O
+    ; 10. Row 11: Keyboard I/O
     mov REG_DI, VGA_BASE + (11 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_sec_kbd1]
@@ -624,7 +624,7 @@ render_static_layout:
     lea REG_SI, [str_sec_kbd2]
     call blit_str_vga
 
-    ; 11. Zeilen 14..20: Architektur-Infobox
+    ; 11. Rows 14..19: Architecture Info Box
     mov REG_DI, VGA_BASE + (14 * 80 + 2) * 2
     mov ah, ATTR_LABEL
     lea REG_SI, [str_info_title]
@@ -655,7 +655,7 @@ render_static_layout:
     lea REG_SI, [str_info_5]
     call blit_str_vga
 
-    ; 12. Zeile 24: Status Footer (Weiss auf Gruen)
+    ; 12. Row 24: Status Footer (White on Green)
     mov REG_DI, VGA_BASE + (24 * 80 * 2)
     mov ax, (ATTR_FOOTER << 8) | ' '
     mov ecx, VGA_COLS
@@ -668,20 +668,20 @@ render_static_layout:
     ret
 
 ; ==============================================================================
-; Hilfsfunktionen fuer VGA Direct-Rendering via stosw / lodsb
+; Direct VGA rendering helpers via stosw / lodsb
 ; ==============================================================================
 
-; blit_divider_line: Zeichnet eine 80-Zeichen Trennlinie
-; REG_DI = Zeilenanfang im VGA-Puffer
+; blit_divider_line: Draws an 80-column horizontal divider line
+; REG_DI = row start address in VGA buffer
 blit_divider_line:
-    mov ax, (ATTR_DIVIDER << 8) | 0xC4 ; Einfache horizontale Linie
+    mov ax, (ATTR_DIVIDER << 8) | 0xC4 ; Single horizontal box-drawing line
     mov ecx, VGA_COLS
     cld
     rep stosw
     ret
 
 ; blit_str_vga:
-; Schreibt nullterminierten String aus REG_SI mit Farb-Attribut AH an VGA-Adresse REG_DI
+; Writes null-terminated string from REG_SI with attribute AH to VGA address REG_DI
 blit_str_vga:
     cld
 .loop:
@@ -694,7 +694,7 @@ blit_str_vga:
     ret
 
 ; write_hex32_vga:
-; Schreibt 8-stelligen 32-Bit Hexwert aus EAX mit Attribut CH direkt nach REG_DI
+; Writes 8-digit 32-bit hex value from EAX with attribute CH directly to REG_DI
 write_hex32_vga:
     push REG_DX
     push REG_CX
@@ -709,7 +709,7 @@ write_hex32_vga:
     add al, 'A' - 10 - '0'
 .d_digit:
     add al, '0'
-    mov ah, ch                  ; Farb-Attribut
+    mov ah, ch                  ; Color attribute
     stosw
     dec ecx
     jnz .h32_loop
@@ -718,7 +718,7 @@ write_hex32_vga:
     ret
 
 ; write_hex8_vga:
-; Schreibt 2-stelligen 8-Bit Hexwert aus AL mit Attribut CH direkt nach REG_DI
+; Writes 2-digit 8-bit hex value from AL with attribute CH directly to REG_DI
 write_hex8_vga:
     push REG_DX
     mov dl, al

@@ -12,6 +12,8 @@ const char *SYSTEM_BUILD   = "VF001.04.0.2026";
 #include "heap.h"
 #include "wdid.h"
 #include "fs_ata.h"
+#include "ata.h"
+#include "ntfs.h"
 #include "pr_mon.h"
 
 
@@ -668,7 +670,7 @@ static int cmd_colr(int argc, char **argv) {
             vga_putchar('\n');
         }
         vga_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-        vga_puts("usage: colr <farbe>  (e.g. colr red, colr 4, colr (blue))\n");
+        vga_puts("usage: colr <color>  (e.g. colr red, colr 4, colr (blue))\n");
         vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return 0;
     }
@@ -763,37 +765,44 @@ static int cmd_heap(int argc, char **argv) {
 
 static void cmd_help(void) {
     vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    vga_puts("dismasmOS 1.4 Available Commands (24):\n");
+    vga_puts("dismasmOS 1.4 Available Commands:\n");
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_puts("  wdid      - manual reader like linux man (wdid <cmd>, scroll: wheel/pgup/pgdn)\n");
-    vga_puts("  help      - display available commands\n");
-    vga_puts("  clear     - clear console screen\n");
-    vga_puts("  colr      - display 16-color 1-bit spot for color (colr (farbe))\n");
-    vga_puts("  heap      - kernel heap allocator status & self-test (heap test)\n");
-    vga_puts("  calc      - integer arithmetic calculator (calc 10 + 5 * 2)\n");
-    vga_puts("  dump      - memory hex and ascii dump (dump 0x1000 64)\n");
-    vga_puts("  reg       - display cpu 64-bit and control registers\n");
-    vga_puts("  asm       - execute raw machine code or opcode mnemonic\n");
-    vga_puts("  lsf       - list files and dirs (flags: -s size in KiB & hex, -p perms)\n");
-    vga_puts("  cd        - change working directory\n");
-    vga_puts("  makedir   - create a new directory\n");
-    vga_puts("  changes   - view filesystem access and modification audit log\n");
-    vga_puts("  em        - vi-style text editor (Alt for commands: ;wsc, ;q, ;s, ;-m)\n");
-    vga_puts("  cat       - display file content\n");
-    vga_puts("  echo      - print or redirect text into file (> file)\n");
-    vga_puts("  touch     - create empty file\n");
-    vga_puts("  rm        - remove file or directory\n");
-    vga_puts("  grep      - search pattern in file\n");
-    vga_puts("  pr        - live hardware monitor (ESC/q to exit) or process control\n");
-    vga_puts("  toc       - list files in ATA LBA28 Table of Contents (ToC Sektor 0)\n");
-    vga_puts("  atasave   - save data to ATA disk extent via ToC (rep outsw)\n");
-    vga_puts("  ataload   - load data from ATA disk extent via ToC (rep insw)\n");
-    vga_puts("  uname     - system information\n");
-    vga_puts("  MemRep    - memory allocation report\n");
-    vga_puts("  lang      - switch keyboard layout (de / en)\n");
-    vga_puts("  shutdown  - power off / halt system via hardware assembly\n");
-    vga_puts("  reboot    - reboot machine\n");
-    vga_puts("  &&        - chain multiple commands sequentially\n");
+    vga_puts("  wdid       - manual reader like linux man (wdid <cmd>, scroll: wheel/pgup/pgdn)\n");
+    vga_puts("  help       - display available commands\n");
+    vga_puts("  clear      - clear console screen\n");
+    vga_puts("  colr       - display 16-color 1-bit spot for color (colr <color>)\n");
+    vga_puts("  heap       - kernel heap allocator status & self-test (heap test)\n");
+    vga_puts("  calc       - integer arithmetic calculator (calc 10 + 5 * 2)\n");
+    vga_puts("  dump       - memory hex and ascii dump (dump 0x1000 64)\n");
+    vga_puts("  reg        - display cpu 64-bit and control registers\n");
+    vga_puts("  asm        - execute raw machine code or opcode mnemonic\n");
+    vga_puts("  lsf        - list files and dirs (flags: -s size in KiB & hex, -p perms)\n");
+    vga_puts("  cd         - change working directory\n");
+    vga_puts("  makedir    - create a new directory\n");
+    vga_puts("  changes    - view filesystem access and modification audit log\n");
+    vga_puts("  em         - vi-style text editor (Alt for commands: ;wsc, ;q, ;s, ;-m)\n");
+    vga_puts("  cat        - display file content\n");
+    vga_puts("  echo       - print or redirect text into file (> file)\n");
+    vga_puts("  touch      - create empty file\n");
+    vga_puts("  rm         - remove file or directory\n");
+    vga_puts("  grep       - search pattern in file\n");
+    vga_puts("  pr         - live hardware monitor (ESC/q to exit) or process control\n");
+    vga_puts("  blkid      - list detected disks, media tags (VHD/HD/SD) & NTFS UUIDs\n");
+    vga_puts("  ntfsinfo   - display ATA IDENTIFY drive data & NTFS VBR/$MFT status\n");
+    vga_puts("  ntfsformat - format an ATA drive as NTFS 3.1 (ntfsformat [/dev/sdX])\n");
+    vga_puts("  ntfsls     - list files on persistent NTFS volume (resident/non-resident)\n");
+    vga_puts("  ntfscat    - read file from NTFS volume (ntfscat <file>)\n");
+    vga_puts("  ntfswrite  - create/overwrite file persistently on NTFS (ntfswrite <f> <txt>)\n");
+    vga_puts("  ntfstouch  - create empty persistent file on NTFS (ntfstouch <file>)\n");
+    vga_puts("  toc        - list files in ATA LBA28 Table of Contents (ToC Sector 0)\n");
+    vga_puts("  atasave    - save data to ATA disk extent via ToC (rep outsw)\n");
+    vga_puts("  ataload    - load data from ATA disk extent via ToC (rep insw)\n");
+    vga_puts("  uname      - system information\n");
+    vga_puts("  MemRep     - memory allocation report\n");
+    vga_puts("  lang       - switch keyboard layout (de / en)\n");
+    vga_puts("  shutdown   - power off / halt system via hardware assembly\n");
+    vga_puts("  reboot     - reboot machine\n");
+    vga_puts("  &&         - chain multiple commands sequentially\n");
 }
 
 
@@ -1027,7 +1036,26 @@ static void cmd_uname(void) {
     vga_puts("dismasmOS 1.2 (x86_64 Long Mode 64-Bit)\nCreation of the Saviour\nMay God lead this Creation\n");
 }
 
+static void cmd_toc(void) {
+    if (ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] Persistent NTFS volume is mounted at /ntfs.\n"
+                 "       Sector 0 contains the NTFS Volume Boot Record (VBR), not a raw ToC.\n"
+                 "       Use 'ntfsls' or 'lsf /ntfs' to list persistent files.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return;
+    }
+    fs_ata_list_toc();
+}
+
 static void cmd_atasave(int argc, char **argv) {
+    if (ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] NTFS volume is active! Use 'ntfswrite' or '/ntfs/...' instead,\n"
+                 "       so Sector 0 (NTFS VBR) is not overwritten by the raw ToC.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return;
+    }
     if (argc < 3) {
         vga_puts("usage: atasave <8_char_name> <content>\n");
         return;
@@ -1042,15 +1070,21 @@ static void cmd_atasave(int argc, char **argv) {
     int res = fs_ata_save_file(name8, argv[2], (uint32_t)dlen);
     if (res == 0) {
         vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        vga_puts("OK: Datei erfolgreich in ATA-Blockextent geschrieben!\n");
+        vga_puts("OK: File written successfully to ATA block extent!\n");
     } else {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        vga_puts("Fehler beim Schreiben auf ATA-Sektoren!\n");
+        vga_puts("Error writing to ATA sectors!\n");
     }
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 static void cmd_ataload(int argc, char **argv) {
+    if (ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] NTFS volume is active! Use 'ntfscat' or 'cat /ntfs/...' instead.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return;
+    }
     if (argc < 2) {
         vga_puts("usage: ataload <8_char_name>\n");
         return;
@@ -1066,24 +1100,213 @@ static void cmd_ataload(int argc, char **argv) {
     int bytes = fs_ata_load_file(name8, load_buf);
     if (bytes >= 0) {
         vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        vga_puts("OK: Datei von ATA-Disk geladen (");
+        vga_puts("OK: File loaded from ATA disk (");
         char nbuf[16];
         itoa(bytes, nbuf);
         vga_puts(nbuf);
-        vga_puts(" Bytes):\n");
+        vga_puts(" bytes):\n");
         vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
         load_buf[bytes < 4095 ? bytes : 4095] = '\0';
         vga_puts(load_buf);
         vga_putchar('\n');
     } else {
         vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        vga_puts("Fehler: Datei nicht in ToC gefunden oder ATA I/O-Fehler!\n");
+        vga_puts("Error: File not found in ToC or ATA I/O error!\n");
     }
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
+static int cmd_ntfsformat(int argc, char **argv) {
+    int slot = ata_get_active_slot();
+    if (argc >= 2) {
+        int matched = -1;
+        for (int s = 0; s < ATA_MAX_DRIVES; s++) {
+            const struct ata_drive_info *d = ata_get_drive_by_slot(s);
+            if (!d || !d->present) {
+                continue;
+            }
+            if (strcmp(argv[1], d->dev_name) == 0 || strcmp(argv[1], d->tag) == 0) {
+                matched = s;
+                break;
+            }
+        }
+        if (matched < 0 && argv[1][0] >= '0' && argv[1][0] <= '3' && argv[1][1] == '\0') {
+            matched = argv[1][0] - '0';
+        }
+        if (matched < 0) {
+            vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            vga_puts("ntfsformat: unknown drive '");
+            vga_puts(argv[1]);
+            vga_puts("'. Use 'blkid' to list available drives.\n");
+            vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return 1;
+        }
+        slot = matched;
+    }
+
+    const struct ata_drive_info *drv = ata_get_drive_by_slot(slot);
+    if (!drv || !drv->present) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No formattable ATA hard drive detected in target slot.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    vga_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    vga_puts("Formatting ");
+    vga_puts(drv->dev_name);
+    vga_puts(" [");
+    vga_puts(drv->tag);
+    vga_puts("] (");
+    vga_puts(drv->model);
+    vga_puts(") as NTFS 3.1...\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    if (ntfs_format_slot(slot, drv->tag) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("[FAIL] NTFS 3.1 formatting failed!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    if (!ntfs_is_mounted() || slot == ata_get_active_slot()) {
+        ata_select_drive(slot);
+        if (ntfs_init_slot(slot, 1) == 0) {
+            fs_mount_ntfs();
+        }
+    }
+
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("[OK] Formatted ");
+    vga_puts(drv->dev_name);
+    vga_puts(" as NTFS 3.1 with tag ");
+    vga_puts(drv->tag);
+    vga_puts(".\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static int cmd_ntfscat(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: ntfscat <file>\n");
+        return 1;
+    }
+    if (!ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No NTFS filesystem mounted!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    struct ntfs_file_info finfo;
+    if (ntfs_find_file(argv[1], &finfo) != 0 || finfo.is_directory) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("ntfscat: file not found on NTFS volume: ");
+        vga_puts(argv[1]);
+        vga_putchar('\n');
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    size_t alloc_len = (size_t)finfo.real_size + 1U;
+    if (alloc_len > 262144U) {
+        alloc_len = 262144U;
+    }
+    char *buf = (char *)malloc(alloc_len);
+    if (!buf) {
+        vga_puts("ntfscat: out of kernel heap memory!\n");
+        return 1;
+    }
+
+    int64_t rd = ntfs_read_file(argv[1], buf, alloc_len - 1U);
+    if (rd < 0) {
+        free(buf);
+        vga_puts("ntfscat: read error while accessing $DATA!\n");
+        return 1;
+    }
+    buf[rd] = '\0';
+
+    vga_write(buf, (size_t)rd);
+    if (rd > 0 && buf[rd - 1] != '\n') {
+        vga_putchar('\n');
+    }
+
+    free(buf);
+    return 0;
+}
+
+static int cmd_ntfswrite(int argc, char **argv) {
+    if (argc < 3) {
+        vga_puts("usage: ntfswrite <file> <content...>\n");
+        return 1;
+    }
+    if (!ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No NTFS filesystem mounted!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    static char write_buf[FS_MAX_FILESIZE];
+    write_buf[0] = '\0';
+    for (int i = 2; i < argc; i++) {
+        if (i > 2) {
+            strncat(write_buf, " ", sizeof(write_buf) - strlen(write_buf) - 1);
+        }
+        strncat(write_buf, argv[i], sizeof(write_buf) - strlen(write_buf) - 1);
+    }
+
+    size_t len = strlen(write_buf);
+    if (ntfs_write_or_create_file(argv[1], write_buf, len) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("[FAIL] NTFS write operation failed!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+
+    fs_mount_ntfs();
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("[OK] Persistently written to NTFS & committed via 0xEA cache flush (");
+    char nbuf[16];
+    itoa((int)len, nbuf);
+    vga_puts(nbuf);
+    vga_puts(" bytes).\n");
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
+static int cmd_ntfstouch(int argc, char **argv) {
+    if (argc < 2) {
+        vga_puts("usage: ntfstouch <file>\n");
+        return 1;
+    }
+    if (!ntfs_is_mounted()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No NTFS filesystem mounted!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    if (ntfs_find_file(argv[1], NULL) == 0) {
+        vga_puts("ntfstouch: file already exists on NTFS volume.\n");
+        return 0;
+    }
+    if (ntfs_create_file(argv[1]) != 0) {
+        vga_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        vga_puts("[FAIL] Could not allocate new NTFS file in $MFT/$I30!\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    fs_mount_ntfs();
+    vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_puts("[OK] Created new persistent file in NTFS ($MFT + $I30): ");
+    vga_puts(argv[1]);
+    vga_putchar('\n');
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+}
+
 static void cmd_pr(int argc, char **argv) {
-    /* Wenn 'pr' ohne Argumente oder mit 'live'/'mon' aufgerufen wird: Dynamischer Live-Monitor! */
+    /* When 'pr' is invoked without arguments or with 'live'/'mon', launch the live monitor */
     if (argc < 2 || strcmp(argv[1], "live") == 0 || strcmp(argv[1], "mon") == 0) {
         pr_monitor_loop();
         return;
@@ -1091,13 +1314,13 @@ static void cmd_pr(int argc, char **argv) {
 
     if (strcmp(argv[1], "start") == 0) {
         if (argc < 3) {
-            vga_puts("usage: pr start <prozess>\n");
+            vga_puts("usage: pr start <process>\n");
             return;
         }
         proc_start(argv[2]);
     } else if (strcmp(argv[1], "kill") == 0) {
         if (argc < 3) {
-            vga_puts("usage: pr kill <prozess>\n");
+            vga_puts("usage: pr kill <process>\n");
             return;
         }
         proc_kill(argv[2]);
@@ -1109,7 +1332,7 @@ static void cmd_pr(int argc, char **argv) {
         }
     } else if (strcmp(argv[1], "-c") == 0) {
         if (argc < 4) {
-            vga_puts("usage: pr -c <comment> <prozess>\n");
+            vga_puts("usage: pr -c <comment> <process>\n");
             return;
         }
         char comment_buf[PROC_COMMENT_MAX];
@@ -1214,7 +1437,7 @@ static int execute_command(int argc, char **argv) {
         cmd_pr(argc, argv);
         return 0;
     } else if (strcmp(argv[0], "toc") == 0 || strcmp(argv[0], "atals") == 0) {
-        fs_ata_list_toc();
+        cmd_toc();
         return 0;
     } else if (strcmp(argv[0], "atasave") == 0) {
         cmd_atasave(argc, argv);
@@ -1222,6 +1445,23 @@ static int execute_command(int argc, char **argv) {
     } else if (strcmp(argv[0], "ataload") == 0) {
         cmd_ataload(argc, argv);
         return 0;
+    } else if (strcmp(argv[0], "blkid") == 0 || strcmp(argv[0], "lsblk") == 0) {
+        ntfs_print_blkid();
+        return 0;
+    } else if (strcmp(argv[0], "ntfsinfo") == 0 || strcmp(argv[0], "disk") == 0) {
+        ntfs_print_info();
+        return 0;
+    } else if (strcmp(argv[0], "ntfsformat") == 0 || strcmp(argv[0], "mkfs.ntfs") == 0) {
+        return cmd_ntfsformat(argc, argv);
+    } else if (strcmp(argv[0], "ntfsls") == 0) {
+        ntfs_print_root_dir();
+        return 0;
+    } else if (strcmp(argv[0], "ntfscat") == 0) {
+        return cmd_ntfscat(argc, argv);
+    } else if (strcmp(argv[0], "ntfswrite") == 0) {
+        return cmd_ntfswrite(argc, argv);
+    } else if (strcmp(argv[0], "ntfstouch") == 0) {
+        return cmd_ntfstouch(argc, argv);
     } else if (strcmp(argv[0], "em") == 0) {
         cmd_em(argc, argv);
         return 0;
@@ -1375,7 +1615,41 @@ void shell_init(void) {
     vga_puts("dismasmOS ");
     vga_puts(SYSTEM_VERSION);
     vga_puts(" (x86_64 Long Mode 64-Bit) - Microkernel\n");
-    vga_puts("Type 'help' for help.\n\n");
+    if (!ata_is_present()) {
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] No hard drive detected! Running in RAMFS-only mode.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    } else if (ntfs_is_mounted()) {
+        const struct ata_drive_info *drv = ata_get_drive_info();
+        const struct ntfs_volume_info *vol = ntfs_get_volume_info();
+        vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        if (vol->newly_formatted) {
+            vga_puts("[OK] First-boot NTFS 3.1 auto-formatted: [");
+        } else {
+            vga_puts("[OK] Persistent disk [");
+        }
+        vga_puts(drv->tag);
+        vga_puts("] (");
+        vga_puts(drv->dev_name);
+        vga_puts(": ");
+        vga_puts(drv->model);
+        vga_puts(") | UUID=");
+        vga_puts(vol->uuid_str);
+        vga_puts(" -> /ntfs\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    } else {
+        const struct ata_drive_info *drv = ata_get_drive_info();
+        vga_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        vga_puts("[WARN] Disk [");
+        vga_puts(drv->tag);
+        vga_puts("] (");
+        vga_puts(drv->dev_name);
+        vga_puts(": ");
+        vga_puts(drv->model);
+        vga_puts(") detected, but no NTFS volume could be mounted.\n");
+        vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+    vga_puts("Type 'help' for commands or 'blkid' for storage devices.\n\n");
     print_prompt();
 }
 

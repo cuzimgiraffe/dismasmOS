@@ -1,14 +1,14 @@
 ; ==============================================================================
-; dismasmOS - Block-/Extent-basiertes ATA-PIO LBA28 Dateisystem
+; dismasmOS - Block / Extent-Based ATA-PIO LBA28 Filesystem
 ; ==============================================================================
-; Spezifikation:
-; - Rohe ATA-PIO-Ports (0x1F0-0x1F7) im LBA28-Modus
-; - Minimale Table of Contents (ToC) in Sektor 0:
-;   * 16-Byte Eintraege: 8 Bytes Name, 4 Bytes Start-LBA, 4 Bytes Groesse
-;   * 32 Eintraege max (512 Bytes / 16 Bytes = 32)
-; - Keine dynamische Heap-Nutzung, keine komplexen Tabellen
-; - Statische Puffer im BSS
-; - Optimierte String-Instruktionen: 'rep insw', 'rep outsw', 'cld', 'stosw'
+; Specification:
+; - Raw ATA-PIO ports (0x1F0-0x1F7) in LBA28 mode
+; - Minimal Table of Contents (ToC) in Sector 0:
+;   * 16-byte entries: 8-byte name, 4-byte start LBA, 4-byte byte size
+;   * 32 entries maximum (512 bytes / 16 bytes = 32)
+; - No dynamic heap usage, no complex tables
+; - Static buffers in BSS
+; - Optimized string instructions: 'rep insw', 'rep outsw', 'cld', 'stosw'
 ; ==============================================================================
 
 default rel
@@ -39,20 +39,20 @@ ATA_SR_DF           equ 0x20    ; Drive write fault
 ATA_SR_DRQ          equ 0x08    ; Data request ready
 ATA_SR_ERR          equ 0x01    ; Error bit
 
-; ToC Spezifikation
-TOC_ENTRY_SIZE      equ 16      ; 8 Bytes Name, 4 Bytes LBA, 4 Bytes Size
-TOC_MAX_ENTRIES     equ 32      ; 512 / 16 = 32 Eintraege pro Sektor
+; ToC Specification
+TOC_ENTRY_SIZE      equ 16      ; 8-byte name, 4-byte LBA, 4-byte size
+TOC_MAX_ENTRIES     equ 32      ; 512 / 16 = 32 entries per sector
 
 section .data
 align 4
 str_toc_hdr:
     db "================================================================================", 10
-    db " [ATA ToC] Sektor 0 LBA28 Block/Extent Dateisystem", 10
+    db " [ATA ToC] Sector 0 LBA28 Block/Extent Filesystem", 10
     db "================================================================================", 10
-    db " IDX  DATEINAME   START-LBA   GROESSE (BYTE)  SEKTOREN   BEREICH", 10
+    db " IDX  FILENAME    START-LBA   SIZE (BYTES)    SECTORS    RANGE", 10
     db "--------------------------------------------------------------------------------", 10, 0
 str_toc_empty:
-    db "  (Keine Dateien vorhanden. Table of Contents ist leer.)", 10, 0
+    db "  (No files found. Table of Contents is empty.)", 10, 0
 str_toc_foot:
     db "--------------------------------------------------------------------------------", 10, 0
 str_nl:
@@ -64,18 +64,18 @@ global toc_buffer
 global last_io_lba
 global last_ata_status
 
-; Feste statische Puffer im BSS - Keine dynamische Heap-Allozierung!
-toc_buffer:         resb 512    ; 1 Sektor fuer Table of Contents
-last_io_lba:        resd 1      ; Letzter zugegriffener LBA28-Sektor
-last_ata_status:    resb 1      ; Zuletzt von Port 0x1F7 gelesenes Status-Byte
-str_num_buf:        resb 16     ; Scratch-Puffer fuer Zahlenausgabe
+; Fixed static buffers in BSS - zero dynamic heap allocation!
+toc_buffer:         resb 512    ; 1 sector for Table of Contents
+last_io_lba:        resd 1      ; Last accessed LBA28 sector
+last_ata_status:    resb 1      ; Last status byte read from port 0x1F7
+str_num_buf:        resb 16     ; Scratch buffer for numeric formatting
 
 section .text
 
-global ata_wait_bsy
-global ata_wait_drq
-global ata_read_sectors
-global ata_write_sectors
+global ata_lba28_wait_bsy
+global ata_lba28_wait_drq
+global ata_lba28_read_sectors
+global ata_lba28_write_sectors
 global fs_ata_save_file
 global fs_ata_load_file
 global fs_ata_list_toc
@@ -85,7 +85,7 @@ extern vga_putchar
 extern vga_set_color
 
 ; ==============================================================================
-; ata_400ns_delay: 4x Lesen des Statusports erzeugt standardkonforme 400ns Pause
+; ata_400ns_delay: Reading the status port 4 times produces a standard 400ns delay
 ; ==============================================================================
 ata_400ns_delay:
     mov dx, ATA_PORT_STATUS
@@ -96,16 +96,16 @@ ata_400ns_delay:
     ret
 
 ; ==============================================================================
-; ata_wait_bsy: Status-Polling - Warte bis BSY (Bit 7) geloescht ist
-; Rueckgabe: EAX = 0 bei Erfolg, 1 bei Timeout/Floating Bus (0xFF)
+; ata_lba28_wait_bsy: Status polling - wait until BSY (bit 7) is clear
+; Return: EAX = 0 on success, 1 on timeout / floating bus (0xFF)
 ; ==============================================================================
-ata_wait_bsy:
+ata_lba28_wait_bsy:
     mov dx, ATA_PORT_STATUS
-    mov ecx, 1000000            ; Timeout-Schutz gegen Haengen
+    mov ecx, 1000000            ; Timeout guard against hangs
 .poll_bsy:
     in al, dx
     mov [last_ata_status], al
-    cmp al, 0xFF                ; Floating bus (kein Laufwerk verbunden)
+    cmp al, 0xFF                ; Floating bus (no drive connected)
     je .err_nodrive
     test al, ATA_SR_BSY
     jz .bsy_clear
@@ -119,10 +119,10 @@ ata_wait_bsy:
     ret
 
 ; ==============================================================================
-; ata_wait_drq: Status-Polling - Warte bis DRQ (Bit 3) gesetzt und kein ERR (Bit 0)
-; Rueckgabe: EAX = 0 bei Erfolg, 1 bei Fehler
+; ata_lba28_wait_drq: Status polling - wait until DRQ (bit 3) is set & no ERR
+; Return: EAX = 0 on success, 1 on error
 ; ==============================================================================
-ata_wait_drq:
+ata_lba28_wait_drq:
     mov dx, ATA_PORT_STATUS
     mov ecx, 1000000
 .poll_drq:
@@ -142,37 +142,37 @@ ata_wait_drq:
     ret
 
 ; ==============================================================================
-; ata_read_sectors:
-; Liest fortlaufende Sektoren via 'rep insw' von der ATA-Schnittstelle
-; Parameter (System V AMD64 ABI):
-;   RDI = Start-LBA (uint32_t)
-;   RSI = Sektoranzahl (uint8_t, 1..255)
-;   RDX = Zielpuffer im RAM (void *)
-; Rueckgabe: EAX = 0 bei Erfolg, -1 bei Fehler
+; ata_lba28_read_sectors:
+; Reads contiguous sectors via 'rep insw' from the ATA interface
+; Parameters (System V AMD64 ABI):
+;   RDI = Start LBA (uint32_t)
+;   RSI = Sector count (uint8_t, 1..255)
+;   RDX = Destination buffer in RAM (void *)
+; Return: EAX = 0 on success, -1 on error
 ; ==============================================================================
-ata_read_sectors:
+ata_lba28_read_sectors:
     push rbx
     push r12
     push r13
     push r14
 
-    mov r12d, edi               ; R12D = aktuelle LBA
-    mov r13d, esi               ; R13D = verbleibende Sektoren
+    mov r12d, edi               ; R12D = current LBA
+    mov r13d, esi               ; R13D = remaining sectors
     and r13d, 0xFF
     test r13d, r13d
     jz .read_done
-    mov r14, rdx                ; R14 = RAM-Zieladresse
+    mov r14, rdx                ; R14 = RAM destination address
 
 .read_sector_loop:
-    ; 1. Letzten LBA im BSS protokollieren
+    ; 1. Record last LBA in BSS
     mov [last_io_lba], r12d
 
-    ; 2. BSY abwarten
-    call ata_wait_bsy
+    ; 2. Wait for BSY clear
+    call ata_lba28_wait_bsy
     test eax, eax
     jnz .read_fail
 
-    ; 3. Laufwerk & LBA28 Bits 24..27 waehlen (Master-Laufwerk = 0xE0)
+    ; 3. Select drive & LBA28 bits 24..27 (Master drive = 0xE0)
     mov eax, r12d
     shr eax, 24
     and al, 0x0F
@@ -181,11 +181,11 @@ ata_read_sectors:
     out dx, al
 
     call ata_400ns_delay
-    call ata_wait_bsy
+    call ata_lba28_wait_bsy
     test eax, eax
     jnz .read_fail
 
-    ; 4. Sektoranzahl (1 Sektor pro Iteration fuer exaktes Polling)
+    ; 4. Sector count (1 sector per iteration for strict polling)
     mov al, 1
     mov dx, ATA_PORT_SECCOUNT
     out dx, al
@@ -207,27 +207,27 @@ ata_read_sectors:
     mov dx, ATA_PORT_LBA_HI
     out dx, al
 
-    ; 8. READ PIO Befehl (0x20) senden
+    ; 8. Issue READ PIO command (0x20)
     mov al, ATA_CMD_READ_PIO
     mov dx, ATA_PORT_COMMAND
     out dx, al
 
     call ata_400ns_delay
 
-    ; 9. Status-Polling: Warten bis DRQ aktiv ist
-    call ata_wait_drq
+    ; 9. Status polling: wait until DRQ is active
+    call ata_lba28_wait_drq
     test eax, eax
     jnz .read_fail
 
-    ; 10. Zyklenoptimiertes Einlesen via 'rep insw' (256 Words = 512 Bytes)
+    ; 10. Cycle-optimized read via 'rep insw' (256 words = 512 bytes)
     mov rdi, r14
     mov dx, ATA_PORT_DATA
     mov ecx, 256
     cld
     rep insw
-    mov r14, rdi                ; RDI wurde automatisch um 512 erhoeht
+    mov r14, rdi                ; RDI automatically incremented by 512
 
-    ; Naechster Sektor
+    ; Next sector
     inc r12d
     dec r13d
     jnz .read_sector_loop
@@ -249,37 +249,37 @@ ata_read_sectors:
     ret
 
 ; ==============================================================================
-; ata_write_sectors:
-; Schreibt Rohdaten aus dem RAM via 'rep outsw' inklusive Status-Polling
-; Parameter:
-;   RDI = Start-LBA (uint32_t)
-;   RSI = Sektoranzahl (uint8_t, 1..255)
-;   RDX = Quellpuffer im RAM (const void *)
-; Rueckgabe: EAX = 0 bei Erfolg, -1 bei Fehler
+; ata_lba28_write_sectors:
+; Writes raw RAM data via 'rep outsw' with full status polling
+; Parameters:
+;   RDI = Start LBA (uint32_t)
+;   RSI = Sector count (uint8_t, 1..255)
+;   RDX = Source buffer in RAM (const void *)
+; Return: EAX = 0 on success, -1 on error
 ; ==============================================================================
-ata_write_sectors:
+ata_lba28_write_sectors:
     push rbx
     push r12
     push r13
     push r14
 
-    mov r12d, edi               ; R12D = aktuelle LBA
-    mov r13d, esi               ; R13D = verbleibende Sektoren
+    mov r12d, edi               ; R12D = current LBA
+    mov r13d, esi               ; R13D = remaining sectors
     and r13d, 0xFF
     test r13d, r13d
     jz .write_done
-    mov r14, rdx                ; R14 = RAM-Quelladresse
+    mov r14, rdx                ; R14 = RAM source address
 
 .write_sector_loop:
-    ; 1. Letzten LBA im BSS protokollieren
+    ; 1. Record last LBA in BSS
     mov [last_io_lba], r12d
 
-    ; 2. BSY abwarten
-    call ata_wait_bsy
+    ; 2. Wait for BSY clear
+    call ata_lba28_wait_bsy
     test eax, eax
     jnz .write_fail
 
-    ; 3. Drive / Head waehlen
+    ; 3. Select Drive / Head
     mov eax, r12d
     shr eax, 24
     and al, 0x0F
@@ -288,11 +288,11 @@ ata_write_sectors:
     out dx, al
 
     call ata_400ns_delay
-    call ata_wait_bsy
+    call ata_lba28_wait_bsy
     test eax, eax
     jnz .write_fail
 
-    ; 4. Sektoranzahl = 1
+    ; 4. Sector count = 1
     mov al, 1
     mov dx, ATA_PORT_SECCOUNT
     out dx, al
@@ -314,42 +314,42 @@ ata_write_sectors:
     mov dx, ATA_PORT_LBA_HI
     out dx, al
 
-    ; 8. WRITE PIO Befehl (0x30) senden
+    ; 8. Issue WRITE PIO command (0x30)
     mov al, ATA_CMD_WRITE_PIO
     mov dx, ATA_PORT_COMMAND
     out dx, al
 
     call ata_400ns_delay
 
-    ; 9. Status-Polling: Warten bis DRQ aktiv ist
-    call ata_wait_drq
+    ; 9. Status polling: wait until DRQ is active
+    call ata_lba28_wait_drq
     test eax, eax
     jnz .write_fail
 
-    ; 10. Zyklenoptimiertes Schreiben via 'rep outsw' (256 Words = 512 Bytes)
+    ; 10. Cycle-optimized write via 'rep outsw' (256 words = 512 bytes)
     mov rsi, r14
     mov dx, ATA_PORT_DATA
     mov ecx, 256
     cld
     rep outsw
-    mov r14, rsi                ; RSI wurde automatisch um 512 erhoeht
+    mov r14, rsi                ; RSI automatically incremented by 512
 
-    ; 11. BSY nach Schreibvorgang abwarten
-    call ata_wait_bsy
+    ; 11. Wait for BSY clear after sector write
+    call ata_lba28_wait_bsy
     test eax, eax
     jnz .write_fail
 
-    ; Naechster Sektor
+    ; Next sector
     inc r12d
     dec r13d
     jnz .write_sector_loop
 
-    ; 12. ATA Cache Flush Befehl (0xE7) zur Persistierung
+    ; 12. Issue ATA Cache Flush command (0xE7) for persistence
     mov al, ATA_CMD_CACHE_FLUSH
     mov dx, ATA_PORT_COMMAND
     out dx, al
     call ata_400ns_delay
-    call ata_wait_bsy
+    call ata_lba28_wait_bsy
 
 .write_done:
     xor eax, eax
@@ -369,13 +369,13 @@ ata_write_sectors:
 
 ; ==============================================================================
 ; fs_ata_save_file:
-; Speichert Rohdaten aus dem RAM auf fortlaufende Sektoren (Block-Extent)
-; und traegt die Datei in die Table of Contents (ToC) in Sektor 0 ein.
-; Parameter:
-;   RDI = Dateiname (8-Byte ASCII Pointer)
-;   RSI = Datenzeiger im RAM (const void *)
-;   RDX = Dateigroesse in Bytes (uint32_t)
-; Rueckgabe: EAX = 0 bei Erfolg, negativ bei Fehler
+; Writes raw RAM data to contiguous sectors (block extent) and registers the
+; file in the Table of Contents (ToC) in Sector 0.
+; Parameters:
+;   RDI = Filename (8-byte ASCII pointer)
+;   RSI = Data pointer in RAM (const void *)
+;   RDX = File size in bytes (uint32_t)
+; Return: EAX = 0 on success, negative on error
 ; ==============================================================================
 fs_ata_save_file:
     push rbx
@@ -384,52 +384,52 @@ fs_ata_save_file:
     push r14
     push r15
 
-    mov r12, rdi                ; R12 = Name (8 Bytes)
-    mov r13, rsi                ; R13 = RAM-Daten
-    mov r14d, edx               ; R14D = Dateigroesse in Bytes
+    mov r12, rdi                ; R12 = Name (8 bytes)
+    mov r13, rsi                ; R13 = RAM data
+    mov r14d, edx               ; R14D = File size in bytes
 
     test r14d, r14d
     jz .save_err_invalid
 
-    ; 1. ToC (Sektor 0, 1 Sektor) in statischen BSS-Puffer toc_buffer laden
+    ; 1. Load ToC (Sector 0, 1 sector) into static BSS buffer toc_buffer
     xor edi, edi                ; LBA = 0
-    mov esi, 1                  ; 1 Sektor
+    mov esi, 1                  ; 1 sector
     lea rdx, [toc_buffer]
-    call ata_read_sectors
+    call ata_lba28_read_sectors
     test eax, eax
     jnz .save_err_io
 
-    ; 2. Sektoranzahl fuer Datei berechnen: (size + 511) / 512
+    ; 2. Compute sector count for file: (size + 511) / 512
     mov eax, r14d
     add eax, 511
     shr eax, 9                  ; / 512
-    mov r15d, eax               ; R15D = Benoetigte Sektoren
+    mov r15d, eax               ; R15D = required sectors
 
-    ; 3. ToC nach freiem Slot oder bestehendem Eintrag durchsuchen
-    ;    Gleichzeitig hoechste belegte LBA zur Allokation ermitteln
+    ; 3. Scan ToC for free slot or matching existing entry
+    ;    Track highest occupied LBA simultaneously for extent allocation
     lea rbx, [toc_buffer]
-    xor ecx, ecx                ; ECX = Slot-Index (0..31)
-    mov edx, -1                 ; EDX = Gefundener freier Slot (-1 = noch keiner)
-    mov esi, 1                  ; ESI = Naechste freie LBA (Start bei 1, LBA 0 ist ToC)
+    xor ecx, ecx                ; ECX = slot index (0..31)
+    mov edx, -1                 ; EDX = first free slot (-1 = none yet)
+    mov esi, 1                  ; ESI = next free LBA (starts at 1, LBA 0 is ToC)
 
 .scan_toc_save:
-    cmp byte [rbx], 0           ; Ist Eintrag leer?
+    cmp byte [rbx], 0           ; Is entry empty?
     jne .entry_occupied
 
-    ; Freier Slot gemerkt, falls noch keiner
+    ; Record free slot if none found yet
     cmp edx, -1
     jne .next_slot
     mov edx, ecx
     jmp .next_slot
 
 .entry_occupied:
-    ; Pruefen, ob Dateiname uebereinstimmt (8 Bytes Vergleich)
+    ; Check whether 8-byte filename matches
     mov rax, [rbx]
     mov r8, [r12]
     cmp rax, r8
     je .found_matching_entry
 
-    ; Hoechste LBA ermitteln: start_lba + sectors
+    ; Compute highest LBA: start_lba + sectors
     mov eax, [rbx + 8]          ; start_lba
     mov r8d, [rbx + 12]         ; size
     add r8d, 511
@@ -437,7 +437,7 @@ fs_ata_save_file:
     add eax, r8d                ; end_lba
     cmp eax, esi
     jbe .next_slot
-    mov esi, eax                ; neue max_lba
+    mov esi, eax                ; new max_lba
 
 .next_slot:
     add rbx, TOC_ENTRY_SIZE
@@ -445,52 +445,52 @@ fs_ata_save_file:
     cmp ecx, TOC_MAX_ENTRIES
     jb .scan_toc_save
 
-    ; Kein uebereinstimmender Eintrag gefunden: Freien Slot nutzen
+    ; No matching entry found: use free slot
     cmp edx, -1
-    je .save_err_full           ; ToC ist voll (32 Eintraege belegt)
-    mov ecx, edx                ; Index des freien Slots
+    je .save_err_full           ; ToC is full (all 32 entries occupied)
+    mov ecx, edx                ; Index of free slot
     lea rbx, [toc_buffer]
-    shl edx, 4                  ; * 16 Bytes
+    shl edx, 4                  ; * 16 bytes
     add rbx, rdx
-    mov edi, esi                ; Start-LBA = naechste freie LBA
+    mov edi, esi                ; Start LBA = next free LBA
     jmp .write_extent
 
 .found_matching_entry:
-    ; Existierende Datei ueberschreiben: Wenn Platz reicht, alte LBA behalten
-    mov edi, [rbx + 8]          ; Vorhandene Start-LBA
+    ; Overwrite existing file at its current start LBA
+    mov edi, [rbx + 8]          ; Existing start LBA
 
 .write_extent:
-    push rbx                    ; ToC-Eintragsadresse sichern
-    push rdi                    ; Start-LBA sichern
+    push rbx                    ; Save ToC entry pointer
+    push rdi                    ; Save start LBA
 
-    ; 4. Rohdaten auf fortlaufende Sektoren via 'rep outsw' schreiben
+    ; 4. Write raw data to contiguous sectors via 'rep outsw'
     ;    RDI = start_lba, RSI = sectors, RDX = ram_data
     mov esi, r15d
     mov rdx, r13
-    call ata_write_sectors
-    pop rdi                     ; Start-LBA wiederherstellen
-    pop rbx                     ; ToC-Eintrag wiederherstellen
+    call ata_lba28_write_sectors
+    pop rdi                     ; Restore start LBA
+    pop rbx                     ; Restore ToC entry pointer
     test eax, eax
     jnz .save_err_io
 
-    ; 5. ToC-Eintrag aktualisieren
-    ; Name kopieren (8 Bytes via qword mov)
+    ; 5. Update ToC entry
+    ; Copy 8-byte name via qword mov
     mov rax, [r12]
     mov [rbx], rax
-    ; Start-LBA eintragen (Offset +8, 4 Bytes)
+    ; Store start LBA (offset +8, 4 bytes)
     mov [rbx + 8], edi
-    ; Groesse eintragen (Offset +12, 4 Bytes)
+    ; Store byte size (offset +12, 4 bytes)
     mov [rbx + 12], r14d
 
-    ; 6. ToC (Sektor 0) zurueck auf die Festplatte schreiben
+    ; 6. Write ToC (Sector 0) back to disk
     xor edi, edi                ; LBA 0
-    mov esi, 1                  ; 1 Sektor
+    mov esi, 1                  ; 1 sector
     lea rdx, [toc_buffer]
-    call ata_write_sectors
+    call ata_lba28_write_sectors
     test eax, eax
     jnz .save_err_io
 
-    xor eax, eax                ; Erfolg!
+    xor eax, eax                ; Success!
     pop r15
     pop r14
     pop r13
@@ -527,29 +527,29 @@ fs_ata_save_file:
 
 ; ==============================================================================
 ; fs_ata_load_file:
-; Sucht Datei nach 8-Byte Namen in der ToC und laedt sie via 'rep insw' in den RAM.
-; Parameter:
-;   RDI = Dateiname (8-Byte ASCII Pointer)
-;   RSI = Zielpuffer im RAM (void *)
-; Rueckgabe: RAX = Gelesene Dateigroesse in Bytes, oder -1 wenn nicht gefunden/Fehler
+; Looks up a file by 8-byte name in the ToC and loads it into RAM via 'rep insw'.
+; Parameters:
+;   RDI = Filename (8-byte ASCII pointer)
+;   RSI = Destination buffer in RAM (void *)
+; Return: RAX = Bytes read, or -1 if not found / I/O error
 ; ==============================================================================
 fs_ata_load_file:
     push rbx
     push r12
     push r13
 
-    mov r12, rdi                ; R12 = Suchname (8 Bytes)
-    mov r13, rsi                ; R13 = Zielpuffer im RAM
+    mov r12, rdi                ; R12 = search name (8 bytes)
+    mov r13, rsi                ; R13 = destination buffer in RAM
 
-    ; 1. ToC (Sektor 0, 1 Sektor) einlesen
+    ; 1. Read ToC (Sector 0, 1 sector)
     xor edi, edi                ; LBA 0
     mov esi, 1
     lea rdx, [toc_buffer]
-    call ata_read_sectors
+    call ata_lba28_read_sectors
     test eax, eax
     jnz .load_fail
 
-    ; 2. ToC nach Dateinamen durchsuchen
+    ; 2. Search ToC for filename
     lea rbx, [toc_buffer]
     xor ecx, ecx
 
@@ -557,7 +557,7 @@ fs_ata_load_file:
     cmp byte [rbx], 0
     je .load_next_slot
 
-    ; 8-Byte Namen vergleichen
+    ; Compare 8-byte name
     mov rax, [rbx]
     mov rdx, [r12]
     cmp rax, rdx
@@ -569,7 +569,7 @@ fs_ata_load_file:
     cmp ecx, TOC_MAX_ENTRIES
     jb .scan_toc_load
 
-    ; Nicht gefunden
+    ; Not found
     mov rax, -1
     pop r13
     pop r12
@@ -577,24 +577,24 @@ fs_ata_load_file:
     ret
 
 .load_match_found:
-    ; Metadaten aus ToC-Eintrag auslesen
-    mov edi, [rbx + 8]          ; EDI = Start-LBA
-    mov ebx, [rbx + 12]         ; EBX = Dateigroesse in Bytes
+    ; Read metadata from ToC entry
+    mov edi, [rbx + 8]          ; EDI = start LBA
+    mov ebx, [rbx + 12]         ; EBX = file size in bytes
 
-    ; Benoetigte Sektoren berechnen: (size + 511) / 512
+    ; Compute required sectors: (size + 511) / 512
     mov eax, ebx
     add eax, 511
     shr eax, 9
-    mov esi, eax                ; ESI = Sektoranzahl
-    mov rdx, r13                ; RDX = Zielpuffer
+    mov esi, eax                ; ESI = sector count
+    mov rdx, r13                ; RDX = destination buffer
 
-    push rbx                    ; Groesse sichern
-    call ata_read_sectors
+    push rbx                    ; Save byte size
+    call ata_lba28_read_sectors
     pop rbx
     test eax, eax
     jnz .load_fail
 
-    ; Rueckgabe: Dateigroesse in Bytes
+    ; Return file size in bytes
     mov eax, ebx
     pop r13
     pop r12
@@ -610,23 +610,23 @@ fs_ata_load_file:
 
 ; ==============================================================================
 ; fs_ata_list_toc:
-; CLI-Befehlsroutine: Listet alle vorhandenen Dateien in der ToC auf.
+; CLI command routine: Lists all files stored in the Sector 0 ToC.
 ; ==============================================================================
 fs_ata_list_toc:
     push rbx
     push r12
     push r13
 
-    ; 1. ToC von LBA 0 einlesen
+    ; 1. Read ToC from LBA 0
     xor edi, edi
     mov esi, 1
     lea rdx, [toc_buffer]
-    call ata_read_sectors
+    call ata_lba28_read_sectors
     test eax, eax
     jz .toc_read_ok
 
-    ; Lesefehler ausgeben
-    mov rdi, 0x0C               ; Rot
+    ; Print read error
+    mov rdi, 0x0C               ; Red
     xor rsi, rsi
     call vga_set_color
     lea rdi, [.str_io_err]
@@ -639,32 +639,32 @@ fs_ata_list_toc:
     pop rbx
     ret
 
-.str_io_err: db "Fehler: Table of Contents konnte nicht von ATA LBA 0 gelesen werden!", 10, 0
+.str_io_err: db "Error: Could not read Table of Contents from ATA LBA 0!", 10, 0
 
 .toc_read_ok:
-    ; Header ausgeben
+    ; Print header
     mov rdi, 0x0B               ; Cyan
     xor rsi, rsi
     call vga_set_color
     lea rdi, [str_toc_hdr]
     call vga_puts
 
-    mov rdi, 0x0F               ; Weiss
+    mov rdi, 0x0F               ; White
     xor rsi, rsi
     call vga_set_color
 
     lea rbx, [toc_buffer]
-    xor r12d, r12d              ; R12D = Index (0..31)
-    xor r13d, r13d              ; R13D = Anzahl gefundener Dateien
+    xor r12d, r12d              ; R12D = index (0..31)
+    xor r13d, r13d              ; R13D = count of found files
 
 .toc_entry_loop:
     cmp byte [rbx], 0
     je .toc_loop_next
 
-    ; Datei gefunden!
+    ; File entry found!
     inc r13d
 
-    ; 1. Index ausgeben: "[XX] "
+    ; 1. Print index: "[XX] "
     mov rdi, '['
     call vga_putchar
     mov eax, r12d
@@ -676,8 +676,8 @@ fs_ata_list_toc:
     mov rdi, ' '
     call vga_putchar
 
-    ; 2. 8-Byte Dateinamen ausgeben (ASCII)
-    mov rdi, 0x0A               ; Gruen
+    ; 2. Print 8-byte filename (ASCII)
+    mov rdi, 0x0A               ; Light green
     xor rsi, rsi
     call vga_set_color
     xor ecx, ecx
@@ -694,7 +694,7 @@ fs_ata_list_toc:
     cmp ecx, 8
     jb .name_loop
 
-    mov rdi, 0x0F               ; Weiss
+    mov rdi, 0x0F               ; White
     xor rsi, rsi
     call vga_set_color
     mov rdi, ' '
@@ -702,7 +702,7 @@ fs_ata_list_toc:
     mov rdi, ' '
     call vga_putchar
 
-    ; 3. Start-LBA als Hex ausgeben: "0xXXXXXXXX"
+    ; 3. Print start LBA in hex: "0xXXXXXXXX"
     lea rdi, [.str_hex_prefix]
     call vga_puts
     mov eax, [rbx + 8]
@@ -712,7 +712,7 @@ fs_ata_list_toc:
     mov rdi, ' '
     call vga_putchar
 
-    ; 4. Groesse in Bytes ausgeben
+    ; 4. Print size in bytes
     mov eax, [rbx + 12]
     call print_dec_padded
     mov rdi, ' '
@@ -720,7 +720,7 @@ fs_ata_list_toc:
     mov rdi, ' '
     call vga_putchar
 
-    ; 5. Sektoren berechnen und ausgeben
+    ; 5. Compute and print sector count
     mov eax, [rbx + 12]
     add eax, 511
     shr eax, 9
@@ -730,9 +730,9 @@ fs_ata_list_toc:
     call vga_putchar
     mov rdi, ' '
     call vga_putchar
-    pop rcx                     ; RCX = Sektoren
+    pop rcx                     ; RCX = sectors
 
-    ; 6. LBA-Bereich ausgeben: LBA .. LBA+sectors-1
+    ; 6. Print LBA range: LBA .. LBA+sectors-1
     mov eax, [rbx + 8]
     call print_dec
     lea rdi, [.str_range_sep]
@@ -750,11 +750,11 @@ fs_ata_list_toc:
     cmp r12d, TOC_MAX_ENTRIES
     jb .toc_entry_loop
 
-    ; Pruefen, ob Dateien gefunden wurden
+    ; Check whether any files were found
     test r13d, r13d
     jnz .toc_show_footer
 
-    mov rdi, 0x0E               ; Gelb
+    mov rdi, 0x0E               ; Yellow
     xor rsi, rsi
     call vga_set_color
     lea rdi, [str_toc_empty]
@@ -779,10 +779,10 @@ fs_ata_list_toc:
 .str_range_sep:  db "..", 0
 
 ; ------------------------------------------------------------------------------
-; Interne Hilfsroutinen zur kompakten formatierten Ausgabe
+; Internal compact formatting helpers
 ; ------------------------------------------------------------------------------
 
-; print_hex32: Schreibt 8-stelligen Hexwert aus EAX
+; print_hex32: Prints 8-digit hex value from EAX
 print_hex32:
     push rbx
     mov edx, eax
@@ -807,7 +807,7 @@ print_hex32:
     pop rbx
     ret
 
-; print_dec2: Schreibt 2-stellige Zahl aus EAX (fuehrende Null)
+; print_dec2: Prints 2-digit number from EAX (with leading zero)
 print_dec2:
     xor edx, edx
     mov ecx, 10
@@ -822,7 +822,7 @@ print_dec2:
     call vga_putchar
     ret
 
-; print_dec: Schreibt Dezimalzahl aus EAX
+; print_dec: Prints decimal integer from EAX
 print_dec:
     push rbx
     lea rbx, [str_num_buf + 15]
@@ -841,7 +841,7 @@ print_dec:
     pop rbx
     ret
 
-; print_dec_padded: Schreibt Dezimalzahl rechtsbuendig formatiert (8 Zeichen)
+; print_dec_padded: Prints right-aligned decimal integer (width 8)
 print_dec_padded:
     push rbx
     push r12
@@ -859,7 +859,7 @@ print_dec_padded:
     test eax, eax
     jnz .pdec_loop
 
-    ; Padding-Leerzeichen ausgeben (8 - laenge)
+    ; Print padding spaces (8 - length)
     mov eax, 8
     sub eax, r12d
     jbe .pdec_out

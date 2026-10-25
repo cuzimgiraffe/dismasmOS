@@ -43,10 +43,16 @@ clean:
 	-rm -f $(OBJ) $(BIN) $(ISO)
 	-rm -rf isodir
 
+DISK_IMG = ntfs_disk.img
+
 qemu: $(ISO)
 	qemu-system-x86_64 -cdrom $(ISO)
+
+qemu-ntfs: $(ISO)
+	qemu-system-x86_64 -cdrom $(ISO) -boot d \
+		-drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk
 
 qemu-bin: $(BIN)
 	qemu-system-x86_64 -kernel $(BIN)
 
-.PHONY: all iso clean qemu qemu-bin
+.PHONY: all iso clean qemu qemu-ntfs qemu-bin
