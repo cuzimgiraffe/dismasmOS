@@ -41,4 +41,3 @@ int vga_parse_color(const char *str);
 const char *vga_get_color_name(uint8_t color);
 
 #endif
-
