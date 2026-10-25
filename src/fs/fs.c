@@ -1,6 +1,10 @@
 #include "fs.h"
+#include "ata.h"
+#include "ntfs.h"
 #include "string.h"
 #include "vga.h"
+
+static int g_syncing_ntfs = 0;
 
 static struct fs_file files[FS_MAX_FILES];
 static struct fs_change change_log[FS_MAX_CHANGES];
@@ -209,6 +213,17 @@ int fs_create(const char *path) {
     if (fs_find(path) != NULL) {
         return -1;
     }
+    if (!g_syncing_ntfs && ntfs_is_mounted() && strncmp(path, "/ntfs/", 6) == 0) {
+        const char *sub = path + 6;
+        if (sub[0] == '\0' || strchr(sub, '/') != NULL) {
+            return -1;
+        }
+        if (ntfs_find_file(sub, NULL) != 0) {
+            if (ntfs_create_file(sub) != 0) {
+                return -1;
+            }
+        }
+    }
     struct fs_file *f = fs_find_slot();
     if (!f) {
         return -1;
@@ -231,6 +246,19 @@ int fs_write(const char *path, const char *data, size_t size) {
     struct fs_file *file = fs_find(path);
     if (!file || file->is_dir) {
         return -1;
+    }
+    if (!g_syncing_ntfs && ntfs_is_mounted()) {
+        if (strncmp(path, "/ntfs/", 6) == 0) {
+            if (ntfs_write_or_create_file(path + 6, data, size) != 0) {
+                return -1;
+            }
+        } else if (strcmp(path, "/etc/fstab") == 0) {
+            char tmp_fstab[FS_MAX_FILESIZE];
+            size_t flen = (size < FS_MAX_FILESIZE - 1) ? size : (FS_MAX_FILESIZE - 1);
+            memcpy(tmp_fstab, data, flen);
+            tmp_fstab[flen] = '\0';
+            (void)ntfs_persist_fstab(tmp_fstab);
+        }
     }
     if (size >= FS_MAX_FILESIZE) {
         size = FS_MAX_FILESIZE - 1;
@@ -472,4 +500,69 @@ void fs_init(void) {
     fs_create("/etc/fstab");
     const char *fstab = "# <file system> <mount point> <type> <options>\nramfs           /             ramfs  rw,relatime 0 0\n";
     fs_write("/etc/fstab", fstab, strlen(fstab));
+}
+
+void fs_mount_ntfs(void) {
+    if (!ntfs_is_mounted()) {
+        return;
+    }
+
+    g_syncing_ntfs = 1;
+    if (!fs_find("/ntfs")) {
+        fs_mkdir("/ntfs");
+    }
+
+    char fstab_disk[FS_MAX_FILESIZE];
+    int64_t fstab_rd = ntfs_read_file(NTFS_PERSISTENT_FSTAB_FILE, fstab_disk, sizeof(fstab_disk) - 1);
+    if (fstab_rd > 0) {
+        fstab_disk[fstab_rd] = '\0';
+        fs_write("/etc/fstab", fstab_disk, (size_t)fstab_rd);
+    } else {
+        const struct ntfs_volume_info *vinfo = ntfs_get_volume_info();
+        const struct ata_drive_info *drv = ata_get_drive_info();
+        const char *tag = (vinfo && vinfo->volume_label[0]) ? vinfo->volume_label : drv->tag;
+
+        fstab_disk[0] = '\0';
+        strcat(fstab_disk, "# /etc/fstab: static file system information (Linux UUID/LABEL persistence)\n");
+        strcat(fstab_disk, "# <file system>          <mount point> <type> <options>                       <dump> <pass>\n");
+        strcat(fstab_disk, "ramfs                    /             ramfs  rw,relatime                     0      0\n");
+        strcat(fstab_disk, "UUID=");
+        strcat(fstab_disk, vinfo ? vinfo->uuid_str : "0000000000000000");
+        strcat(fstab_disk, "    /ntfs         ntfs   rw,sync,flush_ext,tag=");
+        strcat(fstab_disk, tag);
+        strcat(fstab_disk, "   0      1\n");
+
+        fs_write("/etc/fstab", fstab_disk, strlen(fstab_disk));
+        (void)ntfs_persist_fstab(fstab_disk);
+    }
+
+    struct ntfs_file_info entries[32];
+    int count = ntfs_list_root(entries, 32);
+    for (int i = 0; i < count; i++) {
+        if (entries[i].is_directory) {
+            continue;
+        }
+        if (strcmp(entries[i].name, NTFS_PERSISTENT_FSTAB_FILE) == 0) {
+            continue;
+        }
+        char vpath[FS_MAX_PATH];
+        strcpy(vpath, "/ntfs/");
+        strncat(vpath, entries[i].name, FS_MAX_PATH - 7);
+
+        if (!fs_find(vpath)) {
+            if (fs_create(vpath) != 0) {
+                continue;
+            }
+        }
+        struct fs_file *f = fs_find(vpath);
+        if (f) {
+            size_t cap = FS_MAX_FILESIZE - 1;
+            int64_t rd = ntfs_read_file(entries[i].name, f->data, cap);
+            if (rd >= 0) {
+                f->data[rd] = '\0';
+                f->size = (size_t)rd;
+            }
+        }
+    }
+    g_syncing_ntfs = 0;
 }

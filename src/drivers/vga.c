@@ -2,7 +2,6 @@
 #include "io.h"
 #include "string.h"
 
-
 static volatile uint16_t *vga_buffer = (volatile uint16_t *)0xB8000;
 static size_t vga_row = 0;
 static size_t vga_col = 0;
@@ -183,4 +182,3 @@ int vga_parse_color(const char *str) {
 
     return -1;
 }
-

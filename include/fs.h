@@ -24,6 +24,7 @@ struct fs_change {
 };
 
 void fs_init(void);
+void fs_mount_ntfs(void);
 int fs_create(const char *path);
 int fs_mkdir(const char *path);
 int fs_write(const char *path, const char *data, size_t size);

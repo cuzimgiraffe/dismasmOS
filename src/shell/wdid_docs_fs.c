@@ -416,3 +416,88 @@ const struct wdid_entry wdid_doc_grep = {
     "grep", "find", "Search for text patterns line-by-line within a file",
     doc_grep_lines, sizeof(doc_grep_lines) / sizeof(doc_grep_lines[0])
 };
+<<<<<<< HEAD
+
+/* 11. BLKID MANUAL ENTRY */
+static const char * const doc_blkid_lines[] = {
+    "NAME",
+    "  blkid - List detected storage block devices, hardware tags, and NTFS UUIDs",
+    "",
+    "SYNOPSIS",
+    "  blkid",
+    "  lsblk",
+    "",
+    "DESCRIPTION",
+    "  The blkid command inspects all 4 ATA/IDE bus slots (/dev/sda through /dev/sdd)",
+    "  and displays Linux-style block device identification attributes, hardware",
+    "  media classification tags, NTFS volume labels, UUIDs, and mount status.",
+    "",
+    "HARDWARE MEDIA TAGGING",
+    "  Drives are automatically classified via ATA IDENTIFY (Words 27..46, Word 169",
+    "  TRIM, and Word 217 Nominal Media Rotation Rate):",
+    "    - Virtual Disks (QEMU/KVM/VMware/VBox/Hyper-V) -> VHD001 .. VHD999",
+    "    - Physical Hard Disk Drives (Rotational HDD)   -> HD001  .. HD999",
+    "    - Physical Solid State Drives (Non-rotational) -> SD001  .. SD999",
+    "",
+    "PERSISTENT LINUX-STYLE SELECTION",
+    "  On first boot, if no NTFS-formatted disk is found, dismasmOS automatically",
+    "  formats the first writable disk as NTFS 3.1, writes its tag into $Volume,",
+    "  and binds its UUID in /etc/fstab (.fstab). On all subsequent boots, the OS",
+    "  mounts that exact UUID-bound disk at /ntfs even if drive slots change.",
+    "",
+    "SEE ALSO",
+    "  ntfsinfo, ntfsformat, ntfsls, wdid"
+};
+
+/* 12. NTFSINFO MANUAL ENTRY */
+static const char * const doc_ntfsinfo_lines[] = {
+    "NAME",
+    "  ntfsinfo - Display ATA IDENTIFY drive telemetry and NTFS 3.1 volume metadata",
+    "",
+    "SYNOPSIS",
+    "  ntfsinfo",
+    "  disk",
+    "",
+    "DESCRIPTION",
+    "  Prints detailed hardware parameters for the active ATA drive alongside the",
+    "  mounted NTFS 3.1 Volume Boot Record (VBR), cluster size, $MFT Logical",
+    "  Cluster Number (LCN), 64-bit Volume Serial (UUID), and persistent tag.",
+    "",
+    "SEE ALSO",
+    "  blkid, ntfsformat, ntfsls, ntfscat, ntfswrite"
+};
+
+/* 13. NTFSFORMAT MANUAL ENTRY */
+static const char * const doc_ntfsformat_lines[] = {
+    "NAME",
+    "  ntfsformat - Format an ATA block device with a clean NTFS 3.1 filesystem",
+    "",
+    "SYNOPSIS",
+    "  ntfsformat [/dev/sdX | <TAG> | <slot>]",
+    "  mkfs.ntfs [/dev/sdX]",
+    "",
+    "DESCRIPTION",
+    "  Formats the specified ATA drive (or the active drive if omitted) as NTFS 3.1,",
+    "  initializing the VBR, backup VBR, $MFT (system records 0..15), $MFTMirr,",
+    "  $LogFile, $Bitmap, $UpCase, root $I30 index, and $Volume hardware tag.",
+    "",
+    "SEE ALSO",
+    "  blkid, ntfsinfo, ntfsls, ntfswrite"
+};
+
+const struct wdid_entry wdid_doc_blkid = {
+    "blkid", "lsblk", "List detected disks, hardware media tags (VHD/HD/SD) & NTFS UUIDs",
+    doc_blkid_lines, sizeof(doc_blkid_lines) / sizeof(doc_blkid_lines[0])
+};
+
+const struct wdid_entry wdid_doc_ntfsinfo = {
+    "ntfsinfo", "disk", "Display ATA IDENTIFY drive data & NTFS VBR/$MFT status",
+    doc_ntfsinfo_lines, sizeof(doc_ntfsinfo_lines) / sizeof(doc_ntfsinfo_lines[0])
+};
+
+const struct wdid_entry wdid_doc_ntfsformat = {
+    "ntfsformat", "mkfs.ntfs", "Format an ATA drive as NTFS 3.1 (ntfsformat [/dev/sdX])",
+    doc_ntfsformat_lines, sizeof(doc_ntfsformat_lines) / sizeof(doc_ntfsformat_lines[0])
+};
+=======
+>>>>>>> 178f31192094617df49250bf3c3a2f8dcf53aaf3
